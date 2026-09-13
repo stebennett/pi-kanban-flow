@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Local package/install artifacts
+*.tgz
+.pi/npm/
+.pi/git/
+
+# Test and runtime scratch data
+.tmp/
+tmp/
