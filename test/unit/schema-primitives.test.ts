@@ -10,6 +10,7 @@ test("numeric and runtime identifiers are exact", () => {
   const id = runtimeId("KFTX", new Date("2026-01-15T10:30:00.123Z"), "abcdefgh");
   assert.equal(id, "KFTX-20260115T103000123Z-abcdefgh");
   assert.equal(isRuntimeId(id, "KFTX"), true);
+  assert.equal(isRuntimeId("KFTX-20261301T103000123Z-abcdefgh", "KFTX"), false);
 });
 
 test("timestamps and object IDs accept only durable forms", () => {
@@ -24,6 +25,8 @@ test("timestamps and object IDs accept only durable forms", () => {
 test("repository paths are normalized and contained", () => {
   assert.equal(repositoryRelativePath("docs/cards/CARD-0001.md"), "docs/cards/CARD-0001.md");
   assert.throws(() => repositoryRelativePath("../escape"));
+  assert.throws(() => repositoryRelativePath("docs//cards/x"));
+  assert.throws(() => repositoryRelativePath("docs/./cards/x"));
   assert.throws(() => repositoryRelativePath("docs\\cards\\x"));
   assert.deepEqual(sortedUniquePaths(["b", "a"]), ["a", "b"]);
   assert.throws(() => sortedUniquePaths(["a", "a"]));

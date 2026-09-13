@@ -28,12 +28,15 @@ function randomSuffix(): string {
 }
 
 export function isRuntimeId(value: string, prefix: RuntimeIdPrefix): boolean {
-  return new RegExp(`^${prefix}-\\d{8}T\\d{6}\\d{3}Z-${SHORT}$`).test(value);
+  const match = new RegExp(`^${prefix}-(\\d{8}T\\d{9}Z)-(${SHORT})$`).exec(value);
+  if (!match) return false;
+  const compact = match[1];
+  const timestamp = `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}T${compact.slice(9, 11)}:${compact.slice(11, 13)}:${compact.slice(13, 15)}.${compact.slice(15, 18)}Z`;
+  return isUtcTimestamp(timestamp);
 }
 
 export function isObjectId(value: string): boolean { return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value); }
 export function isUtcTimestamp(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) return false;
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime()) && date.toISOString() === (value.includes(".") ? value : value.replace("Z", ".000Z"));
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(value)) return false;
+  return !Number.isNaN(new Date(value).getTime());
 }
