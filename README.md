@@ -6,7 +6,7 @@ A Pi-native kanban workflow package organized around:
 requirements → design → implement → review → ship
 ```
 
-The Stage 0 specification baseline in `docs/` is approved. The package remains scaffolded and implementation has not started.
+The Stage 0 specification baseline in `docs/` is approved. Stage 1 package mechanics are implemented; deterministic board behavior is being delivered incrementally.
 
 ## Repository layout
 
