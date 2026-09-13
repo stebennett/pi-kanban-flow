@@ -1,0 +1,39 @@
+{
+  "name": "pi-kanban-flow",
+  "version": "0.0.0",
+  "description": "A Pi-native, deterministic kanban workflow package.",
+  "type": "module",
+  "private": true,
+  "keywords": [
+    "pi-package",
+    "pi",
+    "kanban",
+    "workflow"
+  ],
+  "files": [
+    "extensions/",
+    "skills/",
+    "agents/",
+    "templates/",
+    "docs/",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/kanban-flow"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

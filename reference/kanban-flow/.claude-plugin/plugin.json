@@ -1,0 +1,8 @@
+{
+  "name": "kanban-flow",
+  "description": "Autonomous, card-driven kanban development: an orchestrator, specialist agents, and a checker for every one of them that verifies its work against stable, auditable criteria. Runs each backlog card through slice → design → implement → test → review, holds it under a hard changed-lines budget, and ships design and implementation as two reviewable PRs.",
+  "version": "0.10.0",
+  "author": { "name": "Steve Bennett" },
+  "license": "MIT",
+  "keywords": ["kanban", "orchestration", "agents", "tdd", "code-review", "workflow"]
+}
