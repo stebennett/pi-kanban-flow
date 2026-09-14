@@ -1,0 +1,118 @@
+import { repositoryRelativePath, sortedUniquePaths } from "../engine/paths.ts";
+import { DirectProcessRunner, type ProcessOptions, type ProcessResult, type ProcessRunner } from "./process.ts";
+
+export interface GitCommandResult extends ProcessResult {}
+export interface GitAdapterOptions { runner?: ProcessRunner; executable?: string; cwd?: string }
+
+function assertSuccess(result: ProcessResult, operation: string): ProcessResult {
+  if (result.code !== 0) throw new Error(`git ${operation} failed (${result.code}): ${result.stderr.trim().slice(0, 500)}`);
+  return result;
+}
+function arg(value: string, label = "git argument"): string {
+  if (!value || value.includes("\0") || value.includes("\n") || value.includes("\r")) throw new Error(`${label} is invalid`);
+  return value;
+}
+
+export class GitAdapter {
+  readonly runner: ProcessRunner;
+  readonly executable: string;
+  readonly defaultCwd?: string;
+  constructor(options: GitAdapterOptions = {}) {
+    this.runner = options.runner ?? new DirectProcessRunner();
+    this.executable = options.executable ?? "git";
+    this.defaultCwd = options.cwd;
+  }
+
+  run(args: readonly string[], options: ProcessOptions = {}): Promise<GitCommandResult> {
+    return this.runner.run(this.executable, args.map((value) => arg(value)), { cwd: options.cwd ?? this.defaultCwd, ...options });
+  }
+  async require(args: readonly string[], operation = args[0] ?? "command", options?: ProcessOptions): Promise<GitCommandResult> {
+    return assertSuccess(await this.run(args, options), operation);
+  }
+  async commonDirectory(cwd = this.defaultCwd): Promise<string> {
+    const result = await this.require(["rev-parse", "--path-format=absolute", "--git-common-dir"], "rev-parse", { cwd });
+    return result.stdout.trim();
+  }
+  async repositoryRoot(cwd = this.defaultCwd): Promise<string> {
+    const result = await this.require(["rev-parse", "--show-toplevel"], "rev-parse", { cwd });
+    return result.stdout.trim();
+  }
+  async resolveRef(ref: string, cwd = this.defaultCwd): Promise<string> {
+    const result = await this.require(["rev-parse", "--verify", ref], "rev-parse", { cwd });
+    return result.stdout.trim();
+  }
+  async fetch(remote = "origin", cwd = this.defaultCwd): Promise<void> {
+    await this.require(["fetch", "--prune", arg(remote, "remote")], "fetch", { cwd });
+  }
+  async branchExists(branch: string, cwd = this.defaultCwd): Promise<boolean> {
+    const result = await this.run(["show-ref", "--verify", "--quiet", `refs/heads/${arg(branch, "branch")}`], { cwd });
+    return result.code === 0;
+  }
+  async remoteBranchExists(branch: string, remote = "origin", cwd = this.defaultCwd): Promise<boolean> {
+    const result = await this.run(["show-ref", "--verify", "--quiet", `refs/remotes/${arg(remote, "remote")}/${arg(branch, "branch")}`], { cwd });
+    return result.code === 0;
+  }
+  async worktrees(cwd = this.defaultCwd): Promise<WorktreeRecord[]> {
+    const result = await this.require(["worktree", "list", "--porcelain"], "worktree list", { cwd });
+    return parseWorktreeList(result.stdout);
+  }
+  async diffNameOnly(base: string, head: string, cwd = this.defaultCwd): Promise<string[]> {
+    const result = await this.require(["diff", "--name-only", "--diff-filter=ACDMRTUXB", `${arg(base, "base")}..${arg(head, "head")}`], "diff", { cwd });
+    return sortedUniquePaths(result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean));
+  }
+  async diffStat(cwd = this.defaultCwd): Promise<string> {
+    return (await this.require(["diff", "--no-ext-diff", "--stat"], "diff", { cwd })).stdout;
+  }
+  async stagedDiff(cwd = this.defaultCwd): Promise<string> {
+    return (await this.require(["diff", "--cached", "--no-ext-diff", "--binary"], "staged diff", { cwd })).stdout;
+  }
+  async stagedNameOnly(cwd = this.defaultCwd): Promise<string[]> {
+    const result = await this.require(["diff", "--cached", "--name-only", "--diff-filter=ACDMRTUXB"], "staged names", { cwd });
+    return sortedUniquePaths(result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean));
+  }
+  async stageExact(paths: readonly string[], cwd = this.defaultCwd): Promise<void> {
+    const exact = sortedUniquePaths(paths);
+    if (exact.length === 0) throw new Error("cannot stage an empty path set");
+    await this.require(["add", "--", ...exact.map((path) => repositoryRelativePath(path))], "add", { cwd });
+  }
+  async commit(message: string, trailers: readonly string[], cwd = this.defaultCwd): Promise<string> {
+    arg(message, "commit message");
+    const trailerArgs = trailers.flatMap((trailer) => ["-m", arg(trailer, "commit trailer")]);
+    const result = await this.require(["commit", "--no-gpg-sign", "-m", message, ...trailerArgs], "commit", { cwd });
+    return this.resolveRef("HEAD", cwd);
+  }
+  async push(remote: string, branch: string, cwd = this.defaultCwd): Promise<void> {
+    await this.require(["push", "--set-upstream", arg(remote, "remote"), arg(branch, "branch")], "push", { cwd });
+  }
+  async isAncestor(ancestor: string, descendant: string, cwd = this.defaultCwd): Promise<boolean> {
+    const result = await this.run(["merge-base", "--is-ancestor", arg(ancestor, "ancestor"), arg(descendant, "descendant")], { cwd });
+    if (result.code === 0) return true;
+    if (result.code === 1) return false;
+    throw new Error(`git merge-base failed (${result.code}): ${result.stderr.trim().slice(0, 500)}`);
+  }
+}
+
+export interface WorktreeRecord { path: string; head: string; branch: string | null; detached: boolean }
+export function parseWorktreeList(output: string): WorktreeRecord[] {
+  const records: WorktreeRecord[] = [];
+  let current: Partial<WorktreeRecord> = {};
+  const flush = () => {
+    if (!current.path || !current.head) throw new Error("malformed git worktree output");
+    records.push({ path: current.path, head: current.head, branch: current.branch ?? null, detached: current.detached ?? false });
+    current = {};
+  };
+  for (const line of output.split(/\r?\n/)) {
+    if (!line) { if (current.path) flush(); continue; }
+    const [key, ...rest] = line.split(" ");
+    const value = rest.join(" ");
+    if (key === "worktree") current.path = value;
+    else if (key === "HEAD") current.head = value;
+    else if (key === "branch") {
+      if (!value.startsWith("refs/heads/")) throw new Error("unexpected git worktree branch");
+      current.branch = value.slice("refs/heads/".length);
+    } else if (key === "detached") current.detached = true;
+    else if (key === "bare") current.detached = true;
+  }
+  if (current.path) flush();
+  return records;
+}
