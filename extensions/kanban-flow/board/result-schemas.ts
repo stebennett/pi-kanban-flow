@@ -6,6 +6,8 @@ const RUN_ID = Type.String({ pattern: "^KFRUN-\\d{8}T\\d{9}Z-[0-9a-hjkmnp-tv-z]{
 const CARD_OR_NONE = Type.Union([Type.String({ pattern: "^CARD-[0-9]{4}$" }), Type.Literal("none")]);
 const TEXT = (maxLength: number) => Type.String({ minLength: 1, maxLength, pattern: "^[^\\u0000\\r\\n]*$" });
 const MARKDOWN = (maxLength: number) => Type.String({ maxLength, pattern: "^[^\\u0000]*$" });
+const NON_EMPTY_MARKDOWN = (maxLength: number) => Type.String({ minLength: 1, maxLength, pattern: "^[^\\u0000]*$" });
+const SIBLING_KEY = Type.String({ pattern: "^[a-z][a-z0-9-]{0,31}$" });
 const PHASE = StringEnum(["requirements", "design", "implementation", "ship"] as const);
 const RESULT_STATUS = StringEnum(["completed", "blocked", "needs_human"] as const);
 const RESULT_ARTIFACT = StringEnum(["requirements_document", "card_proposal_set", "design_document", "implementation_summary", "product_pr_body"] as const);
@@ -17,13 +19,13 @@ export const ResultArtifactSchema = Type.Object({ type: RESULT_ARTIFACT, content
 export const ResultQuestionSchema = Type.Object({ question: TEXT(500), why_needed: TEXT(4000), evidence: Type.Array(EvidenceSchema, { maxItems: 128 }) }, { additionalProperties: false });
 export const PlannedPathSchema = Type.Object({ path: Type.String({ minLength: 1, maxLength: 4096, pattern: "^(?!/)(?!.*\\\\)(?!.*\\u0000)(?!.*[\\r\\n])(?!(?:^|/)\\.{1,2}(?:/|$)).+$" }), action: PLANNED_ACTION }, { additionalProperties: false });
 export const RequirementChangeSchema = Type.Object({
-  temporary_key: TEXT(64), action: ACTION, target_requirement: Type.Union([Type.String({ pattern: "^REQ-[0-9]{4}$" }), Type.Literal("none")]),
+  temporary_key: Type.Union([SIBLING_KEY, Type.Literal("none")]), action: ACTION, target_requirement: Type.Union([Type.String({ pattern: "^REQ-[0-9]{4}$" }), Type.Literal("none")]),
   title: TEXT(200), body: MARKDOWN(200_000), acceptance: Type.Array(TEXT(1000), { minItems: 1, maxItems: 128, uniqueItems: true }),
   supersedes: Type.Array(Type.String({ pattern: "^REQ-[0-9]{4}$" }), { maxItems: 128, uniqueItems: true }),
 }, { additionalProperties: false });
 export const CardChangeSchema = Type.Object({
-  temporary_key: TEXT(64), action: CARD_ACTION, target_card: Type.Union([Type.String({ pattern: "^CARD-[0-9]{4}$" }), Type.Literal("none")]),
-  title: TEXT(200), why: MARKDOWN(10_000), notes: MARKDOWN(10_000), requirements: Type.Array(Type.String({ pattern: "^(?:REQ-[0-9]{4}|[a-z][a-z0-9-]{0,31})$" }), { minItems: 1, maxItems: 128, uniqueItems: true }),
+  temporary_key: Type.Union([SIBLING_KEY, Type.Literal("none")]), action: CARD_ACTION, target_card: Type.Union([Type.String({ pattern: "^CARD-[0-9]{4}$" }), Type.Literal("none")]),
+  title: TEXT(200), why: NON_EMPTY_MARKDOWN(10_000), notes: MARKDOWN(10_000), requirements: Type.Array(Type.String({ pattern: "^(?:REQ-[0-9]{4}|[a-z][a-z0-9-]{0,31})$" }), { minItems: 1, maxItems: 128, uniqueItems: true }),
   acceptance_criteria: Type.Array(Type.Object({ text: TEXT(1000), requirement: Type.String({ pattern: "^(?:REQ-[0-9]{4}|[a-z][a-z0-9-]{0,31})$" }) }, { additionalProperties: false }), { minItems: 1, maxItems: 128 }),
   dependencies: Type.Array(Type.String({ pattern: "^(?:CARD-[0-9]{4}|[a-z][a-z0-9-]{0,31})$" }), { maxItems: 128, uniqueItems: true }), priority: Type.Integer({ minimum: 0, maximum: 1_000_000 }),
 }, { additionalProperties: false });
@@ -48,7 +50,7 @@ export const ReviewerResultSchema = Type.Object({
 }, { additionalProperties: false });
 export type ReviewerResult = Static<typeof ReviewerResultSchema>;
 
-export const ReplacementCardProposalSchema = Type.Object({ temporary_key: Type.String({ pattern: "^[a-z][a-z0-9-]{0,31}$" }), title: TEXT(200), why: MARKDOWN(10_000), notes: MARKDOWN(10_000), requirements: Type.Array(Type.String({ pattern: "^REQ-[0-9]{4}$" }), { minItems: 1, maxItems: 128, uniqueItems: true }), acceptance_criteria: Type.Array(Type.Object({ text: TEXT(1000), requirement: Type.String({ pattern: "^REQ-[0-9]{4}$" }) }, { additionalProperties: false }), { minItems: 1, maxItems: 128 }), dependencies: Type.Array(Type.String({ pattern: "^(?:CARD-[0-9]{4}|[a-z][a-z0-9-]{0,31})$" }), { maxItems: 128, uniqueItems: true }), priority: Type.Integer({ minimum: 0, maximum: 1_000_000 }) }, { additionalProperties: false });
+export const ReplacementCardProposalSchema = Type.Object({ temporary_key: SIBLING_KEY, title: TEXT(200), why: NON_EMPTY_MARKDOWN(10_000), notes: MARKDOWN(10_000), requirements: Type.Array(Type.String({ pattern: "^REQ-[0-9]{4}$" }), { minItems: 1, maxItems: 128, uniqueItems: true }), acceptance_criteria: Type.Array(Type.Object({ text: TEXT(1000), requirement: Type.String({ pattern: "^REQ-[0-9]{4}$" }) }, { additionalProperties: false }), { minItems: 1, maxItems: 128 }), dependencies: Type.Array(Type.String({ pattern: "^(?:CARD-[0-9]{4}|[a-z][a-z0-9-]{0,31})$" }), { maxItems: 128, uniqueItems: true }), priority: Type.Integer({ minimum: 0, maximum: 1_000_000 }) }, { additionalProperties: false });
 export const SplitDecisionResultSchema = Type.Object({
   schema_version: Type.Literal(1), dispatch_id: RUN_ID, card_id: Type.String({ pattern: "^CARD-[0-9]{4}$" }), status: StringEnum(["no_split", "split_required", "needs_human"] as const), rationale: TEXT(4000), replacement_cards: Type.Array(ReplacementCardProposalSchema, { maxItems: 32 }), evidence: Type.Array(EvidenceSchema, { maxItems: 128 }),
 }, { additionalProperties: false });
@@ -69,8 +71,13 @@ export function validateProducerResult(result: ProducerResult, expected: { dispa
   if (result.status === "needs_human" && result.questions.length === 0) fail("needs_human producer requires a question");
   if (result.status === "blocked" && !result.findings.some((finding) => finding.severity === "blocking") && result.evidence.length === 0) fail("blocked producer requires blocking evidence");
   if (result.phase !== "requirements" && (result.requirement_changes.length > 0 || result.card_changes.length > 0)) fail("non-requirements producer cannot return requirement/card changes");
+  if (result.phase !== "design" && result.planned_paths.length > 0) fail(`${result.phase} producer cannot return planned paths`);
+  if (result.phase === "design" && result.status === "completed" && result.planned_paths.length === 0) fail("completed design producer requires planned paths");
+  if (result.phase === "requirements" && result.status === "completed" && result.requirement_changes.length === 0 && result.card_changes.length === 0) fail("completed requirements producer requires a change");
   if (result.status === "completed" && result.artifacts.length === 0) fail("completed producer requires an artifact");
   noDuplicates(result.planned_paths.map((entry) => entry.path), "planned paths");
+  noDuplicates(result.requirement_changes.map((entry) => entry.temporary_key).filter((key) => key !== "none"), "requirement temporary keys");
+  noDuplicates(result.card_changes.map((entry) => entry.temporary_key).filter((key) => key !== "none"), "card temporary keys");
 }
 
 export function validateCheckerResult(result: CheckerResult, expected: { dispatchId: string; cardId: string; phase: CheckerResult["phase"]; criteria: readonly string[] }): void {
