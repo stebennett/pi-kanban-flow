@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { repositoryRelativePath, sortedUniquePaths } from "../engine/paths.ts";
 import { DirectProcessRunner, type ProcessOptions, type ProcessResult, type ProcessRunner } from "./process.ts";
 
@@ -77,12 +80,31 @@ export class GitAdapter {
   }
   async commit(message: string, trailers: readonly string[], cwd = this.defaultCwd): Promise<string> {
     arg(message, "commit message");
-    const trailerArgs = trailers.flatMap((trailer) => ["-m", arg(trailer, "commit trailer")]);
+    const trailerArgs: string[] = [];
+    for (const trailer of trailers) {
+      const separator = trailer.indexOf(":");
+      if (separator < 1) throw new Error("commit trailer must use Key: value syntax");
+      const key = arg(trailer.slice(0, separator).trim(), "commit trailer key");
+      const value = arg(trailer.slice(separator + 1).trim(), "commit trailer value");
+      trailerArgs.push("--trailer", `${key}=${value}`);
+    }
     const result = await this.require(["commit", "--no-gpg-sign", "-m", message, ...trailerArgs], "commit", { cwd });
     return this.resolveRef("HEAD", cwd);
   }
   async push(remote: string, branch: string, cwd = this.defaultCwd): Promise<void> {
     await this.require(["push", "--set-upstream", arg(remote, "remote"), arg(branch, "branch")], "push", { cwd });
+  }
+  async createBranchWorktree(branch: string, base: string, cwd = this.defaultCwd): Promise<{ path: string; branch: string }> {
+    const path = await mkdtemp(join(tmpdir(), "pi-kanban-flow-state-"));
+    await this.require(["worktree", "add", "-b", arg(branch, "branch"), path, arg(base, "base")], "worktree add", { cwd });
+    return { path, branch };
+  }
+  async removeBranchWorktree(path: string, cwd = this.defaultCwd): Promise<void> {
+    await this.require(["worktree", "remove", "--force", path], "worktree remove", { cwd });
+  }
+  async workingDiffPaths(base: string, cwd = this.defaultCwd): Promise<string[]> {
+    const result = await this.require(["diff", "--name-only", "--diff-filter=ACDMRTUXB", arg(base, "base"), "--"], "diff", { cwd });
+    return sortedUniquePaths(result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean));
   }
   async isAncestor(ancestor: string, descendant: string, cwd = this.defaultCwd): Promise<boolean> {
     const result = await this.run(["merge-base", "--is-ancestor", arg(ancestor, "ancestor"), arg(descendant, "descendant")], { cwd });

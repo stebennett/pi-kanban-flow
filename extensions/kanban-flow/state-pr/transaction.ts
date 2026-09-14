@@ -1,6 +1,7 @@
 import { isObjectId, runtimeId } from "../engine/ids.ts";
 import { sortedUniquePaths } from "../engine/paths.ts";
-import type { BoardSnapshot } from "../board/repository.ts";
+import { readBoardRepository, writeAtomicExactFiles, type BoardSnapshot } from "../board/repository.ts";
+import type { GitAdapter } from "./git.ts";
 import {
   discoverManagedPullRequests,
   type GitHubAdapter,
@@ -23,7 +24,7 @@ export interface TransactionWorktree {
 /** The filesystem/repository seam used by the coordinator. */
 export interface StateTransactionRepository {
   read(root: string): Promise<BoardSnapshot>;
-  validate(snapshot: BoardSnapshot): Promise<void> | void;
+  validate(snapshot: BoardSnapshot, root?: string): Promise<void> | void;
   writeRendered(worktree: string, files: Readonly<Record<string, string>>): Promise<void>;
 }
 
@@ -57,6 +58,32 @@ export interface StateMutationResult {
 export interface StateMutation {
   cardIds: readonly string[];
   apply(snapshot: BoardSnapshot, context: StateMutationContext): Promise<StateMutationResult> | StateMutationResult;
+}
+
+/** Adapt the direct Git and repository primitives to the transaction seam. */
+export function createStateTransactionGit(git: GitAdapter): StateTransactionGit {
+  return {
+    fetch: (remote, cwd) => git.fetch(remote, cwd),
+    resolveRef: (ref, cwd) => git.resolveRef(ref, cwd),
+    createWorktree: ({ branch, base, cwd }) => git.createBranchWorktree(branch, base, cwd),
+    diffPaths: ({ worktree, base }) => git.workingDiffPaths(base, worktree),
+    stageExact: ({ worktree, paths }) => git.stageExact(paths, worktree),
+    stagedPaths: (worktree) => git.stagedNameOnly(worktree),
+    commitState: ({ worktree, message, trailers }) => git.commit(message, trailers.split("\\n"), worktree),
+    push: ({ worktree, remote, branch }) => git.push(remote, branch, worktree),
+    removeWorktree: ({ worktree, cwd }) => git.removeBranchWorktree(worktree, cwd),
+  };
+}
+
+export function createStateTransactionRepository(): StateTransactionRepository {
+  return {
+    read: (root) => readBoardRepository(root),
+    validate: async (snapshot, root) => {
+      const reread = await readBoardRepository(root ?? snapshot.root);
+      if (reread.dashboardDrift) throw new StateTransactionError("rendered board snapshot has dashboard drift");
+    },
+    writeRendered: (worktree, files) => writeAtomicExactFiles(worktree, files),
+  };
 }
 
 export interface StateTransactionPlan {
@@ -97,10 +124,9 @@ function equalPaths(left: readonly string[], right: readonly string[]): boolean 
 }
 
 function sortedCardIds(cardIds: readonly string[]): string[] {
-  const ids = [...new Set(cardIds)].sort();
-  if (ids.some((id, index) => !/^CARD-[0-9]{4}$/.test(id) || (index > 0 && ids[index - 1] === id))) {
-    throw new StateTransactionError("card IDs must be unique CARD identifiers");
-  }
+  if (new Set(cardIds).size !== cardIds.length) throw new StateTransactionError("card IDs must be unique CARD identifiers");
+  const ids = [...cardIds].sort();
+  if (ids.some((id) => !/^CARD-[0-9]{4}$/.test(id))) throw new StateTransactionError("card IDs must be CARD identifiers");
   return ids;
 }
 
@@ -188,6 +214,7 @@ export class StateTransactionCoordinator {
     let committed = false;
     try {
       await this.repository.writeRendered(worktree.path, result.files);
+      await this.repository.validate(result.snapshot, worktree.path);
       const actualPaths = assertStatePaths(await this.git.diffPaths({ worktree: worktree.path, base: baseCommit }));
       if (!equalPaths(actualPaths, paths)) throw new StateTransactionError(`state diff does not equal descriptor paths: expected ${paths.join(", ")}; got ${actualPaths.join(", ")}`);
       await this.git.stageExact({ worktree: worktree.path, paths });
