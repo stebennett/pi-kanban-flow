@@ -294,6 +294,37 @@ export const HistoryRecordSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const AcceptanceCriterionSchema = Type.Object(
+  { id: AC_ID, text: SINGLE_LINE(1000), requirement: REQ_ID },
+  { additionalProperties: false },
+);
+
+export const CardSchema = Type.Object(
+  {
+    id: CARD_ID,
+    title: SINGLE_LINE(200),
+    status: DURABLE_STATUS,
+    requirements: Type.Array(REQ_ID, { minItems: 1, maxItems: 128, uniqueItems: true }),
+    grandfathered_requirements: Type.Array(REQ_ID, { maxItems: 128, uniqueItems: true }),
+    acceptance_criteria: Type.Array(AcceptanceCriterionSchema, { minItems: 1, maxItems: 128 }),
+    dependencies: Type.Array(CARD_ID, { maxItems: 128, uniqueItems: true }),
+    replaces: Type.Array(CARD_ID, { maxItems: 128, uniqueItems: true }),
+    replaced_by: Type.Array(CARD_ID, { maxItems: 128, uniqueItems: true }),
+    replacement_reason: Type.Union([Type.Literal("requirements_change"), Type.Literal("split_decision"), Type.Null()]),
+    priority: Type.Integer({ minimum: 0, maximum: 1_000_000 }),
+    created_at: TIMESTAMP,
+    updated_at: TIMESTAMP,
+    started_at: MAYBE_TIMESTAMP,
+    delivered_at: MAYBE_TIMESTAMP,
+    blocked: Type.Union([BlockerSchema, Type.Null()]),
+    workflow: WorkflowSchema,
+    rework: Type.Object({ design: Type.Integer({ minimum: 0, maximum: 10 }), implementation: Type.Integer({ minimum: 0, maximum: 10 }) }, { additionalProperties: false }),
+    history: Type.Array(HistoryRecordSchema, { maxItems: 4096 }),
+  },
+  { additionalProperties: false },
+);
+export type Card = Static<typeof CardSchema>;
+
 export const EvidenceSchema = Type.Object(
   {
     kind: StringEnum(["file", "supplied_probe", "command", "git", "github"] as const),

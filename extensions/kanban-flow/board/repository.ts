@@ -2,8 +2,10 @@ import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { Value } from "typebox/value";
-import { BoardSchema, ConfigSchema, type Board, type Config } from "./schemas.ts";
+import { BoardSchema, CardSchema, ConfigSchema, type Board, type Config } from "./schemas.ts";
 import { renderBoard, type RenderCard } from "../engine/render.ts";
+import { parseRequirements } from "./requirements.ts";
+import { validateBoardSemantics } from "./semantic-validation.ts";
 
 const CARD_FILE = /^CARD-[0-9]{4}\.md$/;
 const CARD_KEYS = [
@@ -125,6 +127,7 @@ function parseCard(text: string, filename: string): CardRecord {
   assertExactKeys(card.workflow.ship, NESTED_KEYS.ship, `${filename}.workflow.ship`);
   assertExactKeys(card.rework, NESTED_KEYS.rework, `${filename}.rework`);
   if (!Array.isArray(card.history)) throw new RepositoryFormatError(`${filename}.history must be an array`);
+  if (!Value.Check(CardSchema, frontmatter)) throw new RepositoryFormatError(`${filename} frontmatter does not match its strict schema`);
   for (const item of card.acceptance_criteria) assertExactKeys(item, NESTED_KEYS.acceptance_criteria, `${filename}.acceptance_criteria[]`);
   for (const item of card.history) assertExactKeys(item, NESTED_KEYS.history, `${filename}.history[]`);
   if (card.blocked !== null) assertExactKeys(card.blocked, NESTED_KEYS.blocked, `${filename}.blocked`);
@@ -200,13 +203,15 @@ export async function readBoardRepository(inputRoot: string): Promise<BoardSnaps
   }
   const canonicalDashboard = renderBoard(cards);
   const requirementsPath = join(docs, "spec.md");
-  const requirements = await lstat(requirementsPath).then(() => textFile(requirementsPath, "docs/spec.md")).catch(() => undefined);
+  const requirementsText = await lstat(requirementsPath).then(() => textFile(requirementsPath, "docs/spec.md")).catch(() => undefined);
+  const requirements = requirementsText === undefined ? undefined : parseRequirements(requirementsText);
+  validateBoardSemantics({ board: boardValue as Board, config: configValue as Config, cards, requirements });
   return Object.freeze({
     root,
     board: boardValue as Board,
     config: configValue as Config,
     cards: Object.freeze(cards),
-    requirements,
+    requirements: requirementsText,
     dashboard,
     canonicalDashboard,
     dashboardDrift: dashboard !== canonicalDashboard,
