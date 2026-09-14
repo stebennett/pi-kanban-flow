@@ -1,5 +1,6 @@
-import { lstat, readFile, readdir, realpath } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { lstat, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { Value } from "typebox/value";
 import { BoardSchema, CardSchema, ConfigSchema, type Board, type Config } from "./schemas.ts";
@@ -216,6 +217,38 @@ export async function readBoardRepository(inputRoot: string): Promise<BoardSnaps
     canonicalDashboard,
     dashboardDrift: dashboard !== canonicalDashboard,
   });
+}
+
+/** Atomically replace the exact repository-relative files owned by a state transaction. */
+export async function writeAtomicExactFiles(rootInput: string, files: Readonly<Record<string, string>>): Promise<void> {
+  const root = await realpath(resolve(rootInput));
+  const paths = Object.keys(files).sort();
+  if (paths.length === 0) throw new RepositoryFormatError("cannot atomically write an empty file set");
+  const temporary: string[] = [];
+  try {
+    for (const path of paths) {
+      if (path !== "docs/spec.md" && !path.startsWith("docs/cards/")) throw new RepositoryFormatError(`write path is not state-owned: ${path}`);
+      if (!path || path.includes("\\") || path.split("/").some((part) => !part || part === "." || part === "..")) throw new RepositoryFormatError(`write path is not normalized: ${path}`);
+      const target = resolve(root, path);
+      const targetRelative = relative(root, target);
+      if (!targetRelative || targetRelative.startsWith("..") || resolve(root, targetRelative) !== target) throw new RepositoryFormatError(`write path escapes repository root: ${path}`);
+      let parent = dirname(target);
+      while (parent !== root) {
+        const parentInfo = await lstat(parent).catch(() => undefined);
+        if (!parentInfo || parentInfo.isSymbolicLink() || !parentInfo.isDirectory()) throw new RepositoryFormatError(`write parent is unsafe: ${path}`);
+        parent = dirname(parent);
+      }
+      const existing = await lstat(target).catch(() => undefined);
+      if (existing && (existing.isSymbolicLink() || !existing.isFile() || existing.nlink !== 1)) throw new RepositoryFormatError(`write target is unsafe: ${path}`);
+      const temporaryPath = join(dirname(target), `.${basename(target)}.${randomBytes(8).toString("hex")}.tmp`);
+      await writeFile(temporaryPath, files[path]!, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      temporary.push(temporaryPath);
+      await rename(temporaryPath, target);
+      temporary.pop();
+    }
+  } finally {
+    await Promise.all(temporary.map((path) => rm(path, { force: true }).catch(() => undefined)));
+  }
 }
 
 export { RepositoryFormatError };
