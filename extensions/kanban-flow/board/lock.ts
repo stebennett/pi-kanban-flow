@@ -266,6 +266,22 @@ async function removeIfOwned(path: string, ownerToken: string): Promise<void> {
   await unlink(path);
 }
 
+async function unlinkSafeRegularFile(path: string, label: string): Promise<void> {
+  const info = await lstat(path).catch(() => undefined);
+  if (!info) return;
+  if (info.isSymbolicLink() || !info.isFile() || info.nlink !== 1) throw new CorruptLockError(path, "", `${label} is not a safe regular file`);
+  await assertSecureMode(path, 0o600, label);
+  await unlink(path);
+}
+
+async function removeMatchingTemporaryFiles(directory: string, ownerToken: string): Promise<void> {
+  const prefix = `${LOCK_FILE}.${ownerToken}.`;
+  for (const name of await readdir(directory)) {
+    if (!name.startsWith(prefix) || !name.endsWith(".tmp")) continue;
+    await unlinkSafeRegularFile(join(directory, name), "lock temporary file");
+  }
+}
+
 async function acquireMutex(directory: string, options: { now: Clock; host: string; pid: number; isProcessAlive: ProcessAlive }): Promise<{ path: string; token: string }> {
   const path = join(directory, MUTEX_FILE);
   const token = randomBytes(32).toString("hex");
@@ -347,8 +363,8 @@ function ownerSummary(record: LeaseLock): LockOwnerSummary {
 export async function acquireLock(options: LockOptions): Promise<LockHandle> {
   const resolver = options.resolveCommonDir ?? ((cwd: string) => resolveGitCommonDir(cwd, options.process ?? runDirectProcess));
   const commonDir = await canonicalDirectory(await resolver(resolve(options.cwd)));
-  const directory = await ensureLockDirectory(commonDir);
   const normalized = normalizeOptions(options, commonDir);
+  const directory = await ensureLockDirectory(commonDir);
   const operationId = options.operationId ?? runtimeId("KFOP", normalized.now());
   if (!isRuntimeId(operationId, "KFOP")) throw new LockError("invalid lock operation ID");
   if (options.transactionId !== undefined && options.transactionId !== null && !isRuntimeId(options.transactionId, "KFTX")) throw new LockError("invalid lock transaction ID");
@@ -371,7 +387,7 @@ export async function acquireLock(options: LockOptions): Promise<LockHandle> {
   validateLockSemantics(record, { repositoryId: normalized.repositoryId, commonDir, ttlSeconds: normalized.ttlSeconds });
   const mutexOptions = { now: normalized.now, host: normalized.host, pid: normalized.pid, isProcessAlive: normalized.isProcessAlive };
   await withMutex(directory, mutexOptions, async () => {
-    const existing = await readLock(commonLockPaths(commonDir).lock, { repositoryId: normalized.repositoryId, commonDir });
+    const existing = await readLock(commonLockPaths(commonDir).lock, { repositoryId: normalized.repositoryId, commonDir, ttlSeconds: normalized.ttlSeconds });
     if (existing) {
       const expired = new Date(existing.expires_at).getTime() <= normalized.now().getTime();
       if (!expired) throw new LockContentionError(ownerSummary(existing));
@@ -417,12 +433,12 @@ export async function acquireLock(options: LockOptions): Promise<LockHandle> {
   };
 }
 
-export async function readLockRecord(options: { cwd: string; resolveCommonDir?: GitCommonDirResolver; process?: DirectProcess; repositoryId?: string }): Promise<LeaseLock | null> {
+export async function readLockRecord(options: { cwd: string; resolveCommonDir?: GitCommonDirResolver; process?: DirectProcess; repositoryId?: string; ttlSeconds?: number }): Promise<LeaseLock | null> {
   const resolver = options.resolveCommonDir ?? ((cwd: string) => resolveGitCommonDir(cwd, options.process ?? runDirectProcess));
   const commonDir = await canonicalDirectory(await resolver(resolve(options.cwd)));
   const paths = commonLockPaths(commonDir);
   await ensureLockDirectory(commonDir);
-  return readLock(paths.lock, options.repositoryId ? { repositoryId: options.repositoryId, commonDir } : { commonDir });
+  return readLock(paths.lock, { ...(options.repositoryId ? { repositoryId: options.repositoryId } : {}), commonDir, ...(options.ttlSeconds === undefined ? {} : { ttlSeconds: options.ttlSeconds }) });
 }
 
 export async function forceUnlock(options: { cwd: string; repositoryId: string; confirm: string | (() => boolean | Promise<boolean>); resolveCommonDir?: GitCommonDirResolver; process?: DirectProcess; pid?: number; host?: string; now?: Clock; isProcessAlive?: ProcessAlive }): Promise<void> {
@@ -436,20 +452,27 @@ export async function forceUnlock(options: { cwd: string; repositoryId: string; 
     const path = commonLockPaths(commonDir).lock;
     const raw = await readRaw(path, "lock.json");
     if (raw === null) return;
+
+    // Force unlock is the explicit recovery path for a corrupt JSON record. Do
+    // not trust malformed fields, and never follow a symlink or remove a hard
+    // link. A validated token is used only to clean matching temporary files.
+    let parsed: unknown;
     let token: string | undefined;
     try {
-      const parsed = JSON.parse(raw) as Partial<LeaseLock>;
-      if (parsed.repository_id !== options.repositoryId || parsed.git_common_dir !== commonDir) throw new LockError("force unlock repository identity does not match");
-      token = parsed.owner_token;
-      if (token && !/^[0-9a-f]{64}$/.test(token)) throw new LockError("force unlock owner token is invalid");
-    } catch (error) {
-      if (error instanceof CorruptLockError) throw error;
-      throw new CorruptLockError(path, raw, error instanceof Error ? error.message : "cannot inspect lock");
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
     }
-    if (!token) throw new CorruptLockError(path, raw, "lock has no owner token");
-    await unlink(path);
-    const files = await readdir(directory);
-    for (const name of files) if (name.startsWith(`${LOCK_FILE}.${token}.`) && name.endsWith(".tmp")) await unlink(join(directory, name));
+    if (parsed && typeof parsed === "object") {
+      const candidate = parsed as Partial<LeaseLock>;
+      if (candidate.repository_id !== undefined && candidate.repository_id !== options.repositoryId) throw new LockError("force unlock repository identity does not match");
+      if (candidate.git_common_dir !== undefined && candidate.git_common_dir !== commonDir) throw new LockError("force unlock Git common directory does not match");
+      if (candidate.owner_token !== undefined && typeof candidate.owner_token === "string" && /^[0-9a-f]{64}$/.test(candidate.owner_token)) {
+        token = candidate.owner_token;
+      }
+    }
+    await unlinkSafeRegularFile(path, "lock.json");
+    if (token) await removeMatchingTemporaryFiles(directory, token);
   });
 }
 

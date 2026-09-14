@@ -169,7 +169,8 @@ export interface TransitionEffects {
   readonly cardId: string;
   readonly from: DurableStatus;
   readonly to: DurableStatus;
-  readonly selected: true;
+  /** False when the event is a reconciliation or explicit-resolution pump. */
+  readonly selected: boolean;
   readonly reconciliationOnly: boolean;
 }
 
@@ -269,13 +270,35 @@ function appendPaths(existing: readonly string[], additions: readonly string[]):
   return [...existing, ...additions.filter((path) => !existing.includes(path))];
 }
 
+const BRANCH_SLUG = /^(?:[a-z0-9]|[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,46}[a-z0-9])$/;
+
+function assertManagedBranch(branch: string, kind: "design" | "card", cardId: string): void {
+  const prefix = kind === "design" ? "kanban/design/" : "kanban/card/";
+  const suffix = branch.startsWith(prefix) ? branch.slice(prefix.length) : "";
+  const expectedPrefix = `${cardId}-`;
+  const slug = suffix.startsWith(expectedPrefix) ? suffix.slice(expectedPrefix.length) : "";
+  if (!slug || slug.length > 48 || !BRANCH_SLUG.test(slug)) fail(`${kind} branch is not canonical for ${cardId}`);
+}
+
+function productBranch(card: CardSnapshot): string {
+  const rawTitle = typeof card.title === "string" ? card.title : card.id;
+  const slug = rawTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").replace(/-+/g, "-").slice(0, 48).replace(/-+$/g, "") || card.id.toLowerCase();
+  return `kanban/card/${card.id}-${slug}`;
+}
+
 function blocker(card: CardSnapshot, metadata: TransitionMetadata, reason: string, evidence: readonly string[] = [], resumeStatus: DurableStatus = card.status): Blocker {
+  if (typeof reason !== "string" || reason.trim() !== reason || [...reason].length < 1 || [...reason].length > 2000 || /[\u0000\r\n]/.test(reason)) fail("blocker reason must be a trimmed single-line string of 1..2000 characters");
   if (!BLOCKER_RESUME[card.status].includes(resumeStatus)) fail(`cannot resume ${card.status} as ${resumeStatus}`);
-  return { reason, source_phase: card.status as Blocker["source_phase"], resume_status: resumeStatus as Blocker["resume_status"], created_at: metadata.at, evidence: [...new Set(evidence)] };
+  if (evidence.length > 32 || new Set(evidence).size !== evidence.length || evidence.some((path) => typeof path !== "string" || !path || path.includes("\\") || /[\u0000\r\n]/.test(path) || path.startsWith("/") || path.split("/").some((part) => part === "" || part === "." || part === ".."))) fail("blocker evidence must be unique repository-relative paths");
+  return { reason, source_phase: card.status as Blocker["source_phase"], resume_status: resumeStatus as Blocker["resume_status"], created_at: metadata.at, evidence: [...evidence] };
 }
 
 function assertMerged(pr: PRRecord): void {
   if (pr.state !== "merged" || pr.merge_commit === null) fail("evidence must prove a merged PR");
+}
+
+function assertOpen(pr: PRRecord, label: string): void {
+  if (pr.state !== "open" || pr.merge_commit !== null) fail(`${label} must be open and unmerged`);
 }
 
 /**
@@ -290,9 +313,7 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
   if (index < 0) fail(`card ${request.cardId} does not exist`);
   const card = source.cards[index];
   const event = request.event;
-  if (card.status === "done" || card.status === "replaced") {
-    if (event.kind !== "deterministic_correction") fail(`terminal card ${card.id} is immutable`);
-  }
+  if (card.status === "done" || card.status === "replaced") fail(`terminal card ${card.id} is immutable`);
   requireUnblocked(card, event);
   requireNonNegativeLimit(request.designLimit, "design");
   requireNonNegativeLimit(request.implementationLimit, "implementation");
@@ -302,7 +323,10 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
   switch (event.kind) {
     case "design_passed": {
       requireStatus(card, ["backlog", "designing"], event);
-      if (!event.evidence.branch || !event.evidence.producerResultPath || !event.evidence.checkerResultPath) fail("design pass requires branch and producer/checker evidence");
+      if (!event.evidence.branch || !event.evidence.producerResultPath || !event.evidence.checkerResultPath || !event.evidence.pr) fail("design pass requires branch, open PR, and producer/checker evidence");
+      assertManagedBranch(event.evidence.branch, "design", card.id);
+      assertOpen(event.evidence.pr, "design PR");
+      if (event.evidence.pr.head !== event.evidence.branch) fail("design PR head must equal its design branch");
       const next = card.status === "backlog" ? "design_review" : "design_review";
       changed = withHistory(card, request.metadata, "design_pr_opened", next, {
         started_at: card.started_at ?? request.metadata.at,
@@ -311,7 +335,7 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
           design: {
             ...card.workflow.design,
             branch: event.evidence.branch,
-            pr: event.evidence.pr ?? card.workflow.design.pr,
+            pr: event.evidence.pr,
             producer_result_paths: appendPaths(card.workflow.design.producer_result_paths, [event.evidence.producerResultPath]),
             checker_result_paths: appendPaths(card.workflow.design.checker_result_paths, [event.evidence.checkerResultPath]),
           },
@@ -344,12 +368,14 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
     case "design_merged": {
       requireStatus(card, ["design_review"], event);
       assertMerged(event.evidence.pr);
+      if (card.workflow.design.branch) assertManagedBranch(card.workflow.design.branch, "design", card.id);
+      if (!card.workflow.design.pr || event.evidence.pr.number !== card.workflow.design.pr.number || event.evidence.pr.head !== card.workflow.design.branch || event.evidence.pr.head_commit !== card.workflow.design.pr.head_commit) fail("merged design PR must match the recorded design PR");
       if (event.evidence.approvedCommit !== event.evidence.pr.head_commit) fail("approved design commit must equal merged PR head commit");
       if (card.workflow.design.checker_result_paths.length === 0) fail("design merge requires a checker result");
       changed = withHistory(card, request.metadata, "design_pr_merged", "ready_for_implementation", {
         workflow: { ...card.workflow, design: { ...card.workflow.design, pr: event.evidence.pr, approved_commit: event.evidence.approvedCommit } },
       });
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: true };
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: true };
       break;
     }
     case "design_closed": {
@@ -362,13 +388,14 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
           rework: { ...card.rework, design: count + 1 },
         });
       }
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: true };
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: true };
       break;
     }
     case "split_decided": {
       requireStatus(card, ["ready_for_implementation"], event);
       if (!card.workflow.design.approved_commit) fail("split assessment requires an approved design");
       const split = event.evidence;
+      if (!split.resultPath || !split.decidedAt) fail("split assessment requires a result path and decision timestamp");
       const decisionChanges = {
         result_path: split.resultPath,
         decided_at: split.decidedAt,
@@ -396,8 +423,17 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
           return { snapshot: nextBoard, proposedSnapshot: nextBoard, effects: { cardId: card.id, from: card.status, to: "replaced", selected: true, reconciliationOnly: false } };
         }
       } else {
+        const branch = card.workflow.implementation.branch ?? productBranch(card);
+        assertManagedBranch(branch, "card", card.id);
         changed = withHistory(card, request.metadata, "split_not_required", "implementing", {
-          workflow: { ...card.workflow, split_decision: { ...card.workflow.split_decision, ...decisionChanges }, implementation: { ...card.workflow.implementation, branch: card.workflow.implementation.branch ?? `kanban/card/${card.id.toLowerCase()}` } },
+          workflow: {
+            ...card.workflow,
+            split_decision: { ...card.workflow.split_decision, ...decisionChanges },
+            implementation: {
+              ...card.workflow.implementation,
+              branch,
+            },
+          },
         });
         effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: false };
       }
@@ -459,7 +495,11 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
     }
     case "product_pr_opened": {
       requireStatus(card, ["ready_to_ship"], event);
-      if (event.evidence.pr.state !== "open" || event.evidence.pr.head_commit !== card.workflow.review.reviewed_commit) fail("product PR must be open at the reviewed commit");
+      if (!card.workflow.implementation.branch || !card.workflow.review.reviewed_commit) fail("product PR requires an implementation branch and reviewed commit");
+      assertManagedBranch(card.workflow.implementation.branch, "card", card.id);
+      if (event.evidence.verificationResultPaths.length === 0) fail("product PR requires verification evidence");
+      assertOpen(event.evidence.pr, "product PR");
+      if (event.evidence.pr.head !== card.workflow.implementation.branch || event.evidence.pr.head_commit !== card.workflow.review.reviewed_commit) fail("product PR must use the implementation branch at the reviewed commit");
       changed = withHistory(card, request.metadata, "product_pr_opened", "shipping", {
         workflow: { ...card.workflow, ship: { ...card.workflow.ship, product_pr: event.evidence.pr, verification_result_paths: appendPaths(card.workflow.ship.verification_result_paths, event.evidence.verificationResultPaths) } },
       });
@@ -468,9 +508,14 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
     }
     case "shipping_reconciled": {
       requireStatus(card, ["shipping"], event);
-      if (event.evidence.pr.state !== "open" || event.evidence.pr.number !== card.workflow.ship.product_pr?.number) fail("shipping reconciliation must preserve the marked product PR");
+      const existingProductPr = card.workflow.ship.product_pr;
+      if (!existingProductPr || !card.workflow.implementation.branch || !card.workflow.review.reviewed_commit) fail("shipping reconciliation requires an existing product PR and reviewed commit");
+      assertManagedBranch(card.workflow.implementation.branch, "card", card.id);
+      assertOpen(event.evidence.pr, "product PR");
+      if (event.evidence.pr.number !== existingProductPr.number || event.evidence.pr.head !== card.workflow.implementation.branch || event.evidence.pr.head_commit !== card.workflow.review.reviewed_commit) fail("shipping reconciliation must preserve the marked product PR");
+      if (event.evidence.verificationResultPaths.length === 0 && card.workflow.ship.verification_result_paths.length === 0) fail("shipping reconciliation requires verification evidence");
       changed = withHistory(card, request.metadata, "product_pr_reconciled", "shipping", { workflow: { ...card.workflow, ship: { ...card.workflow.ship, product_pr: event.evidence.pr, verification_result_paths: appendPaths(card.workflow.ship.verification_result_paths, event.evidence.verificationResultPaths) } } });
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: true };
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: true };
       break;
     }
     case "shipping_code_failure": {
@@ -484,48 +529,52 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
           workflow: { ...card.workflow, review: { ...card.workflow.review, reviewed_commit: null, completed_at: null } },
         });
       }
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: true };
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: true };
       break;
     }
     case "shipping_blocked": {
       requireStatus(card, ["shipping"], event);
       changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, event.reason, event.evidence, "shipping") });
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: true };
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: true };
       break;
     }
     case "product_merged": {
       requireStatus(card, ["shipping"], event);
       const pr = card.workflow.ship.product_pr;
-      if (!pr || event.pr.state !== "merged" || event.pr.number !== pr.number || event.pr.merge_commit !== event.mergeCommit) fail("product merge requires matching authoritative merged PR evidence");
+      if (!pr || pr.state !== "open" || event.pr.state !== "merged" || event.pr.number !== pr.number || event.pr.head !== pr.head || event.pr.head_commit !== pr.head_commit || event.pr.merge_commit !== event.mergeCommit) fail("product merge requires matching authoritative merged PR evidence");
+      assertManagedBranch(event.pr.head, "card", card.id);
       changed = withHistory(card, request.metadata, "product_pr_merged", "done", { delivered_at: event.deliveredAt, workflow: { ...card.workflow, ship: { ...card.workflow.ship, product_pr: event.pr, merged_commit: event.mergeCommit } }, blocked: null });
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: true };
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: true };
       break;
     }
     case "recovery_product_merged": {
       requireStatus(card, ["ready_to_ship"], event);
       assertMerged(event.pr);
-      if (event.pr.merge_commit !== event.mergeCommit || event.pr.head_commit !== card.workflow.review.reviewed_commit) fail("recovery merge evidence does not match reviewed product PR");
+      if (!card.workflow.implementation.branch || !card.workflow.review.reviewed_commit || !event.evidence || event.evidence.length === 0) fail("recovery merge requires product branch, review, and verification evidence");
+      assertManagedBranch(event.pr.head, "card", card.id);
+      if (event.pr.head !== card.workflow.implementation.branch || event.pr.merge_commit !== event.mergeCommit || event.pr.head_commit !== card.workflow.review.reviewed_commit) fail("recovery merge evidence does not match reviewed product PR");
       changed = withHistory(card, request.metadata, "product_pr_merged", "done", { delivered_at: event.deliveredAt, workflow: { ...card.workflow, ship: { ...card.workflow.ship, product_pr: event.pr, merged_commit: event.mergeCommit, verification_result_paths: appendPaths(card.workflow.ship.verification_result_paths, event.evidence ?? []) } }, blocked: null });
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: true };
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: true };
       break;
     }
     case "blocker_resolved": {
       if (card.blocked === null) fail(`card ${card.id} is not blocked`);
       if (!BLOCKER_RESUME[card.status].includes(event.resumeStatus)) fail(`cannot resume ${card.status} as ${event.resumeStatus}`);
+      if (event.resumeStatus !== card.blocked.resume_status) fail(`blocker resolution must use its recorded resume status ${card.blocked.resume_status}`);
       let changes: Partial<CardSnapshot> = { blocked: null };
       if (event.proceedUnsplit) {
-        if (card.status !== "ready_for_implementation" || card.workflow.split_decision.result_path === null) fail("proceed_unsplit is only valid after a split decision");
+        if (card.status !== "ready_for_implementation" || event.resumeStatus !== "ready_for_implementation" || !(card.grandfathered_requirements && card.grandfathered_requirements.length > 0) || card.workflow.split_decision.result_path === null || card.workflow.split_decision.decided_at === null) fail("proceed_unsplit is only valid for a grandfathered split-required decision");
+        if (!card.blocked.reason.startsWith("split is required for a grandfathered card;")) fail("proceed_unsplit cannot override a non-split blocker");
+        if (card.workflow.split_decision.override !== null) fail("split override is immutable");
+        if (typeof event.proceedUnsplit.reason !== "string" || event.proceedUnsplit.reason.trim() !== event.proceedUnsplit.reason || [...event.proceedUnsplit.reason].length < 1 || [...event.proceedUnsplit.reason].length > 2000 || /[\u0000\r\n]/.test(event.proceedUnsplit.reason)) fail("split override reason must be a trimmed single-line string of 1..2000 characters");
         changes = { ...changes, workflow: { ...card.workflow, split_decision: { ...card.workflow.split_decision, override: { decision: "proceed_unsplit", reason: event.proceedUnsplit.reason, decided_at: event.proceedUnsplit.decidedAt, operation_id: request.metadata.operationId } } } };
       }
       changed = withHistory(card, request.metadata, "blocker_resolved", event.resumeStatus, changes);
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: false };
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: true };
       break;
     }
     case "deterministic_correction": {
-      requireStatus(card, ["done", "replaced"], event);
-      changed = withHistory(card, request.metadata, "deterministic_correction", event.status ?? card.status);
-      effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: true };
-      break;
+      fail("deterministic correction requires an explicit audited repair workflow");
     }
   }
 
