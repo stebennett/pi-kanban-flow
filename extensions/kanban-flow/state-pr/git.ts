@@ -104,7 +104,16 @@ export class GitAdapter {
   }
   async workingDiffPaths(base: string, cwd = this.defaultCwd): Promise<string[]> {
     const result = await this.require(["diff", "--name-only", "--diff-filter=ACDMRTUXB", arg(base, "base"), "--"], "diff", { cwd });
-    return sortedUniquePaths(result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean));
+    const paths = result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean);
+    const status = await this.require(["status", "--porcelain=v1", "--untracked-files=all"], "status", { cwd });
+    for (const line of status.stdout.split(/\r?\n/).map((value) => value.trimEnd()).filter(Boolean)) {
+      if (line.startsWith("?? ")) paths.push(line.slice(3));
+      else if (line.length >= 4) {
+        const path = line.slice(3);
+        paths.push(path.includes(" -> ") ? path.slice(path.lastIndexOf(" -> ") + 4) : path);
+      }
+    }
+    return sortedUniquePaths(paths);
   }
   async isAncestor(ancestor: string, descendant: string, cwd = this.defaultCwd): Promise<boolean> {
     const result = await this.run(["merge-base", "--is-ancestor", arg(ancestor, "ancestor"), arg(descendant, "descendant")], { cwd });
