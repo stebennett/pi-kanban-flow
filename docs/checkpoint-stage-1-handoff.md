@@ -9,6 +9,8 @@
 
 This checkpoint gives a new agent enough repository and sequencing context to begin Stage 1 safely. It is a navigation and execution aid, not a replacement for the specifications. If this document differs from a detailed `docs/spec-*.md` document, the detailed specification is authoritative.
 
+The pickup-ready execution plan is `docs/stage-1-implementation-plan.md`.
+
 ## Required reading before editing
 
 Read these files in order and completely:
@@ -20,6 +22,7 @@ Read these files in order and completely:
 5. the detailed specifications relevant to the work item
 6. `docs/spec-readiness-review.md`
 7. `docs/stage-0-review-matrix.md`
+8. `docs/stage-1-implementation-plan.md`
 
 For Stage 1, the most important detailed specifications are:
 
