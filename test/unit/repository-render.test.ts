@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
-import { readBoardRepository, type CardRecord } from "../../extensions/kanban-flow/board/repository.ts";
+import { readBoardRepository, writeAtomicExactFiles, type CardRecord } from "../../extensions/kanban-flow/board/repository.ts";
 import { renderBoard } from "../../extensions/kanban-flow/engine/render.ts";
 
 const board = {
@@ -69,6 +69,13 @@ test("rejects duplicate YAML keys, unknown files, CRLF, and symlinks", async () 
   const linked = await fixture();
   await symlink(join(linked, "docs", "cards", "board.yaml"), join(linked, "docs", "cards", "linked.yaml"));
   await assert.rejects(readBoardRepository(linked), /symlink/);
+});
+
+test("atomically writes exact state-owned paths and rejects escapes", async () => {
+  const root = await fixture();
+  await writeAtomicExactFiles(root, { "docs/cards/BOARD.md": "canonical\n" });
+  assert.equal(await readFile(join(root, "docs", "cards", "BOARD.md"), "utf8"), "canonical\n");
+  await assert.rejects(writeAtomicExactFiles(root, { "../escape": "nope" }), /state-owned|normalized|escapes/);
 });
 
 test("renders deterministic ordering and suffix precedence", () => {

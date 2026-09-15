@@ -13,16 +13,16 @@ export class MissingPackageAssetError extends Error {
 }
 
 /** Resolve the installed package root from this module, including symlinked installs. */
-export async function packageRoot(): Promise<string> {
-  return realpath(resolve(dirname(fileURLToPath(import.meta.url)), "../.."));
+export async function packageRoot(moduleUrl: string = import.meta.url): Promise<string> {
+  return realpath(resolve(dirname(fileURLToPath(moduleUrl)), "../.."));
 }
 
 /** Resolve an asset without permitting absolute paths or package-root escapes. */
-export async function resolvePackageAsset(asset: string): Promise<string> {
-  if (!asset || isAbsolute(asset) || asset.includes("\\") || asset.split("/").some((part) => part === "..")) {
+export async function resolvePackageAsset(asset: string, moduleUrl: string = import.meta.url): Promise<string> {
+  if (!asset || isAbsolute(asset) || asset.includes("\\") || asset.split("/").some((part) => part === "" || part === "." || part === "..")) {
     throw new MissingPackageAssetError(asset || "<empty>");
   }
-  const root = await packageRoot();
+  const root = await packageRoot(moduleUrl);
   const candidate = resolve(root, asset);
   const canonical = await realpath(candidate).catch(() => undefined);
   if (!canonical || (relative(root, canonical).startsWith("..") || isAbsolute(relative(root, canonical)))) {
