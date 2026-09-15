@@ -407,10 +407,10 @@ Every broad role has a code-assembled least-authority policy, and implementation
 - Fail unavailable, ambiguous, unauthenticated, or non-tool-capable overrides with no fallback.
 - Record actual model/thinking later from final authoritative events and compare it with the dispatch plan.
 - Map the engine-owned role to strict/broad policy, one result tool, allowed package tools, fixed timeout/event/byte/artifact limits, cwd kind, and approved skills.
-- Validate every allowlisted skill as an in-repository trusted path; add one separate `--skill` argument per approved skill.
+- Validate every allowlisted skill as an in-repository trusted path; parent-read, normalize, bound, and inject each approved skill into the temporary system prompt rather than relying on `--skill` discovery.
 - Define and assemble the exact approved context set: applicable `AGENTS.md`, package protocol/doctrine, the optional project `PROTOCOL-ADDENDUM.md`, explicitly allowlisted skills, agent body, and dispatch inputs. Normalize and bound it before writing a mode-`0600` temporary system prompt; project guidance may inform the producer but cannot override engine policy.
 - Keep the user prompt to a bounded task envelope and dispatch ID.
-- Construct deterministic direct argv containing `--mode json -p --no-session`, all four resource-disable flags, `--no-builtin-tools`, the one explicit extension, exact `--tools`, model/thinking flags, prompt path, and approved skills. Never pass `--approve`.
+- Construct deterministic direct argv containing `--mode json -p --no-session`, all four resource-disable flags, `--no-builtin-tools`, the one explicit extension, exact `--tools`, model/thinking flags, and prompt path. Never pass `--approve` or child `--skill` arguments.
 - Create a machine-local KFRUN dispatch record with redacted argv and parent-owned inputs/limits without treating it as board state.
 
 #### Tests
