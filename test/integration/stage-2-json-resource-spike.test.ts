@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 const runRealSpike = process.env.PI_RUN_REAL_STAGE_2_SPIKE === "1";
 
-function execute(command: string, args: readonly string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+function execute(command: string, args: readonly string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -20,6 +20,31 @@ function execute(command: string, args: readonly string[], cwd: string): Promise
     child.once("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
   });
 }
+
+test("noninteractive Pi loads a saved-trusted project extension without approve", { skip: !runRealSpike }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "kanban-flow-trust-child-spike-"));
+  const extensionDir = join(root, ".pi", "extensions");
+  await mkdir(extensionDir, { recursive: true });
+  const store = new (await import("@earendil-works/pi-coding-agent")).ProjectTrustStore(join(homedir(), ".pi", "agent"));
+  store.set(root, true);
+  await writeFile(join(extensionDir, "trusted-spike.ts"), [
+    'import { Type } from "typebox";',
+    'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+    'export default function(pi: ExtensionAPI) { pi.registerTool({ name: "submit_trust_spike", label: "Submit trust spike", description: "Call once.", parameters: Type.Object({}, { additionalProperties: false }), async execute() { return { content: [{ type: "text", text: "trusted" }], details: { loaded: true }, terminate: true }; } }); }',
+  ].join("\n"), { mode: 0o600 });
+  try {
+    const result = await execute("pi", [
+      "--mode", "json", "-p", "--no-session", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-builtin-tools",
+      "--tools", "submit_trust_spike", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "low",
+      "Call submit_trust_spike exactly once. Do not write prose.",
+    ], root);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /"toolName":"submit_trust_spike"/);
+  } finally {
+    store.set(root, null);
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("real Pi receives parent-injected approved skill content while context files remain excluded", { skip: !runRealSpike }, async () => {
   const root = await mkdtemp(join(tmpdir(), "kanban-flow-skill-spike-"));

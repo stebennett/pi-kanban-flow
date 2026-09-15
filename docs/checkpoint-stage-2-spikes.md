@@ -21,6 +21,10 @@
   the validated skill and supplies its normalized, bounded content through the
   mode-`0600` `--append-system-prompt` file. A real Pi spike proves that this
   prompt content reaches the child while `AGENTS.md` remains excluded.
+- A noninteractive real Pi child started without `--approve` loaded a temporary
+  project extension only after the test wrote a saved `yes` decision through
+  `ProjectTrustStore`; the test removes that temporary saved decision on exit.
+  This proves the compatible persisted-trust adapter and child reuse boundary.
 - Pi 0.85.1 exposes `ProjectTrustStore.getEntry()` through
   `@earendil-works/pi-coding-agent`. The integration spike proves canonical
   ancestor lookup and distinguishes persisted `true`, `false`, and absent
@@ -38,7 +42,7 @@ node --test --import tsx test/integration/stage-2-prerequisites.test.ts
 ## Still required before production runner work
 
 This checkpoint does **not** close Work unit 0. The following mandatory proofs
-remain: non-interactive saved-trust reuse without `--approve`; duplicate, invalid,
+remain: duplicate, invalid,
 wrong-role, sibling-tool, post-result-conflict, malformed, and size-limit
 structured-result cases; archive and strict/broad path-policy
 escape cases; named-command policy; normalized attestation secret/path checks;
