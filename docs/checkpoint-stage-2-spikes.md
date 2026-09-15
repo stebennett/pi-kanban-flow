@@ -25,6 +25,11 @@
   project extension only after the test wrote a saved `yes` decision through
   `ProjectTrustStore`; the test removes that temporary saved decision on exit.
   This proves the compatible persisted-trust adapter and child reuse boundary.
+- A disposable real Git repository proves direct-argv `git archive --format=tar`
+  from an explicit commit produces an exact immutable snapshot: a later mutable
+  checkout change is absent from the archive. The future materializer must
+  parse and validate entries before extraction; this does not authorize
+  trusting `tar` extraction for adversarial archives.
 - Pi 0.85.1 exposes `ProjectTrustStore.getEntry()` through
   `@earendil-works/pi-coding-agent`. The integration spike proves canonical
   ancestor lookup and distinguishes persisted `true`, `false`, and absent
@@ -44,7 +49,7 @@ node --test --import tsx test/integration/stage-2-prerequisites.test.ts
 This checkpoint does **not** close Work unit 0. The following mandatory proofs
 remain: duplicate, invalid,
 wrong-role, sibling-tool, post-result-conflict, malformed, and size-limit
-structured-result cases; archive and strict/broad path-policy
-escape cases; named-command policy; normalized attestation secret/path checks;
+structured-result cases; adversarial archive extraction and strict/broad
+path-policy escape cases; named-command policy; normalized attestation secret/path checks;
 and SIGTERM grace/SIGKILL cleanup on the minimum/current macOS and Linux
 matrix.
