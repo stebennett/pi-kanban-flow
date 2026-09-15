@@ -2,8 +2,8 @@
 
 **Status:** Ready for implementation after the Stage 1 completion baseline and Stage 2 prerequisite gate are confirmed on `main`
 **Prepared from:** `docs/migration-plan.md`, `docs/stage-0-specifications.md`, and the completed Stage 1 plan/checkpoint
-**Authoritative `main` at preparation:** `deefeb0`
-**Completed Stage 1 tip reviewed:** `stage-1/completion-handoff` at `270ed5c`
+**Authoritative `main` at implementation start:** `8ade90b`
+**Completed Stage 1 baseline:** merged on protected `main` through PR #22
 **Stage objective:** Child runner and structured output
 
 ## 1. Purpose

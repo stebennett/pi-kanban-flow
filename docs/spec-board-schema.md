@@ -164,7 +164,7 @@ All config objects use `additionalProperties: false`.
 | each project command | non-empty argv array of 1–64 strings; each string maximum 4096 code points and contains no NUL/newline; element zero is the executable |
 | `agent_models.default` | constant `inherit` |
 | `agent_models.overrides` | map keyed only by the fixed agent names in `spec-project-overrides-config.md`; unknown keys rejected |
-| model selector | `provider/model` with an optional final thinking suffix from `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`; provider and model are non-empty and contain no whitespace/control characters |
+| model selector | `provider/model` with an optional recognized final thinking suffix from `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; provider and model are non-empty and contain no whitespace/control characters. A `:` not forming one of those final suffixes remains part of the model identifier. |
 | `agents.allow_project_overrides` | boolean |
 | `agents.report_overrides` | constant `true`; active overrides are always reported even when project overrides are disabled |
 | `resources.broad_policy_allowed_skills` | unique lexically sorted array of at most 32 repository-relative skill-directory paths; no absolute path, empty segment, `.`/`..`, backslash, or symlink escape |

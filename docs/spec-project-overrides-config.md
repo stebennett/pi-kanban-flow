@@ -38,7 +38,7 @@ agent_models:
 ```
 
 - Inheritance includes parent provider, model ID, and effective thinking level.
-- Override syntax is Pi `provider/model` with optional `:<thinking>` suffix.
+- Override syntax is Pi `provider/model` with an optional recognized final `:<thinking>` suffix (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`). Colons that do not form a recognized final suffix remain part of the model ID.
 - Override keys are names from the fixed workflow-agent set above; unknown keys fail config validation.
 - Unresolved or unauthenticated overrides fail dispatch with no fallback.
 - The runner records the actual provider/model/thinking from authoritative Pi events.

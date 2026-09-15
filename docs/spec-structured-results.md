@@ -111,7 +111,7 @@ findings:
 evidence: []
 ```
 
-`phase` is `requirements|design|ship`; `status` is derived from criteria: `pass` only when every verdict passes, `fail` when at least one fails, and `inconclusive` otherwise. Every dispatched criterion key appears exactly once, no undispatched key appears, and each criterion has exactly `key`, `verdict`, and a non-empty evidence array. Every failing criterion has at least one blocking finding naming that criterion. A pass result has no blocking findings. The engine allocates durable `FINDING-*` IDs; the child does not.
+`phase` is `requirements|design|ship`; requirements dispatches require `card_id: none`, while design and ship dispatches require the exact dispatched `CARD-*` ID. `status` is derived from criteria: `pass` only when every verdict passes, `fail` when at least one fails, and `inconclusive` otherwise. Every dispatched criterion key appears exactly once, no undispatched key appears, and each criterion has exactly `key`, `verdict`, and a non-empty evidence array. Every failing criterion has at least one blocking finding naming that criterion. A pass result has no blocking findings. The engine allocates durable `FINDING-*` IDs; the child does not.
 
 ### Reviewer
 
