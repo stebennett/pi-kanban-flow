@@ -21,13 +21,13 @@ function execute(command: string, args: readonly string[], cwd: string): Promise
   });
 }
 
-test("real Pi does not inject an explicit skill body while context files remain excluded", { skip: !runRealSpike }, async () => {
+test("real Pi receives parent-injected approved skill content while context files remain excluded", { skip: !runRealSpike }, async () => {
   const root = await mkdtemp(join(tmpdir(), "kanban-flow-skill-spike-"));
   const extension = join(root, "isolation-spike.ts");
-  const skill = join(root, "approved-skill");
-  await mkdir(skill);
+  const prompt = join(root, "parent-system-prompt.md");
+  await mkdir(join(root, "approved-skill"));
   await writeFile(join(root, "AGENTS.md"), "UNAPPROVED_CONTEXT_MARKER\n");
-  await writeFile(join(skill, "SKILL.md"), "---\nname: approved-skill\ndescription: APPROVED_SKILL_MARKER\n---\n# Approved skill\n");
+  await writeFile(prompt, "APPROVED_SKILL_MARKER\n", { mode: 0o600 });
   await writeFile(extension, [
     'import { Type } from "typebox";',
     'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
@@ -41,13 +41,13 @@ test("real Pi does not inject an explicit skill body while context files remain 
   try {
     const result = await execute("pi", [
       "--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-builtin-tools",
-      "-e", extension, "--skill", skill, "--tools", "submit_isolation_spike", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "low",
+      "-e", extension, "--append-system-prompt", prompt, "--tools", "submit_isolation_spike", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "low",
       "Call submit_isolation_spike exactly once. Do not write prose.",
     ], root);
     assert.equal(result.code, 0, result.stderr);
     const events = result.stdout.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
     const turnEnd = events.find((event) => event.type === "turn_end") as { toolResults?: Array<{ details?: unknown }> } | undefined;
-    assert.deepEqual(turnEnd?.toolResults?.[0]?.details, { approved_skill: false, unapproved_context: false });
+    assert.deepEqual(turnEnd?.toolResults?.[0]?.details, { approved_skill: true, unapproved_context: false });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
