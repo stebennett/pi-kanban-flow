@@ -410,7 +410,7 @@ Every broad role has a code-assembled least-authority policy, and implementation
 - Validate every allowlisted skill as an in-repository trusted path; add one separate `--skill` argument per approved skill.
 - Define and assemble the exact approved context set: applicable `AGENTS.md`, package protocol/doctrine, the optional project `PROTOCOL-ADDENDUM.md`, explicitly allowlisted skills, agent body, and dispatch inputs. Normalize and bound it before writing a mode-`0600` temporary system prompt; project guidance may inform the producer but cannot override engine policy.
 - Keep the user prompt to a bounded task envelope and dispatch ID.
-- Construct deterministic direct argv containing `--mode json -p --no-session`, all four `--no-*` resource flags, the one explicit extension, exact `--tools`, model/thinking flags, prompt path, and approved skills. Never pass `--approve`.
+- Construct deterministic direct argv containing `--mode json -p --no-session`, all four resource-disable flags, `--no-builtin-tools`, the one explicit extension, exact `--tools`, model/thinking flags, prompt path, and approved skills. Never pass `--approve`.
 - Create a machine-local KFRUN dispatch record with redacted argv and parent-owned inputs/limits without treating it as board state.
 
 #### Tests
