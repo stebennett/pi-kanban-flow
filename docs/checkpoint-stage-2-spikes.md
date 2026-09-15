@@ -4,6 +4,10 @@
 
 ## Verified locally
 
+- A real Pi 0.85.1 prose-only JSON-mode run exited `0` and emitted
+  `agent_end` without any tool result or `toolUse` stop reason. This confirms
+  that process success and final events alone are insufficient: the parent
+  runner must reject prose-only completion.
 - A real Pi 0.85.1 JSON-mode run with OpenAI Codex invoked one explicitly
   loaded terminating tool. It exited `0`, emitted the session header,
   `turn_end`, and `agent_end`, reported `stopReason: toolUse`, and exposed
@@ -30,8 +34,9 @@ node --test --import tsx test/integration/stage-2-prerequisites.test.ts
 
 This checkpoint does **not** close Work unit 0. The following mandatory proofs
 remain: non-interactive saved-trust reuse without `--approve`; explicit skill
-presence plus unrelated global/project resource absence; the complete
-structured role-result rejection matrix; archive and strict/broad path-policy
+presence plus unrelated global/project resource absence; duplicate, invalid,
+wrong-role, sibling-tool, post-result-conflict, malformed, and size-limit
+structured-result cases; archive and strict/broad path-policy
 escape cases; named-command policy; normalized attestation secret/path checks;
 and SIGTERM grace/SIGKILL cleanup on the minimum/current macOS and Linux
 matrix.
