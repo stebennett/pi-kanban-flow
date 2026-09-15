@@ -16,6 +16,13 @@
   and a one-tool allowlist. The sanitized integration test is opt-in through
   `PI_RUN_REAL_STAGE_2_SPIKE=1` because it consumes authenticated provider
   usage.
+- **Blocking finding:** with `--no-skills --skill <path>` and no built-in read
+  tool, Pi 0.85.1 lists neither the approved skill body in the assembled
+  system prompt nor the excluded `AGENTS.md` context. The absence of context
+  is correct; however, this cannot meet the planned proof that an approved
+  broad-policy skill reaches a child. Do not implement the broad policy until
+  the specification selects an explicit, package-owned skill-content injection
+  mechanism or permits a narrowly jailed reader for skills.
 - Pi 0.85.1 exposes `ProjectTrustStore.getEntry()` through
   `@earendil-works/pi-coding-agent`. The integration spike proves canonical
   ancestor lookup and distinguishes persisted `true`, `false`, and absent
@@ -33,8 +40,8 @@ node --test --import tsx test/integration/stage-2-prerequisites.test.ts
 ## Still required before production runner work
 
 This checkpoint does **not** close Work unit 0. The following mandatory proofs
-remain: non-interactive saved-trust reuse without `--approve`; explicit skill
-presence plus unrelated global/project resource absence; duplicate, invalid,
+remain: non-interactive saved-trust reuse without `--approve`; a specification
+resolution for approved-skill delivery; duplicate, invalid,
 wrong-role, sibling-tool, post-result-conflict, malformed, and size-limit
 structured-result cases; archive and strict/broad path-policy
 escape cases; named-command policy; normalized attestation secret/path checks;
