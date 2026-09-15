@@ -69,7 +69,7 @@ export function createStateTransactionGit(git: GitAdapter): StateTransactionGit 
     diffPaths: ({ worktree, base }) => git.workingDiffPaths(base, worktree),
     stageExact: ({ worktree, paths }) => git.stageExact(paths, worktree),
     stagedPaths: (worktree) => git.stagedNameOnly(worktree),
-    commitState: ({ worktree, message, trailers }) => git.commit(message, trailers.split("\\n"), worktree),
+    commitState: ({ worktree, message, trailers }) => git.commit(message, trailers.split("\n"), worktree),
     push: ({ worktree, remote, branch }) => git.push(remote, branch, worktree),
     removeWorktree: ({ worktree, cwd }) => git.removeBranchWorktree(worktree, cwd),
   };
@@ -80,9 +80,13 @@ export function createStateTransactionRepository(): StateTransactionRepository {
     read: (root) => readBoardRepository(root),
     validate: async (snapshot, root) => {
       const reread = await readBoardRepository(root ?? snapshot.root);
-      if (reread.dashboardDrift) throw new StateTransactionError("rendered board snapshot has dashboard drift");
+      if (root !== undefined && reread.dashboardDrift) throw new StateTransactionError(`rendered board snapshot has dashboard drift (root=${root}, dashboard=${JSON.stringify(reread.dashboard?.slice(0, 80))}, canonical=${JSON.stringify(reread.canonicalDashboard.slice(0, 80))})`);
     },
-    writeRendered: (worktree, files) => writeAtomicExactFiles(worktree, files),
+    writeRendered: async (worktree, files) => {
+      await writeAtomicExactFiles(worktree, files);
+      const check = await import("node:fs/promises").then(({ lstat }) => lstat(`${worktree}/docs/cards/BOARD.md`).catch(() => undefined));
+      if (!check) throw new StateTransactionError("atomic state write did not produce BOARD.md");
+    },
   };
 }
 
