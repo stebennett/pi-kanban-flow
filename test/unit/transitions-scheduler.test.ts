@@ -85,6 +85,14 @@ test("rework exhaustion blocks without incrementing and blocker resolution is ex
   assert.throws(() => applyTransition(board([blocked]), request({ kind: "blocker_resolved", resumeStatus: "implementing" })));
 });
 
+test("backlog design rework exhaustion remains backlog and blocks safely", () => {
+  const exhausted = card("CARD-0001", "backlog", 1, { rework: { design: 1, implementation: 0 } });
+  const blocked = applyTransition(board([exhausted]), request({ kind: "design_changes_requested" }, { designLimit: 1 })).snapshot.cards[0];
+  assert.equal(blocked.status, "backlog");
+  assert.equal(blocked.rework.design, 1);
+  assert.equal(blocked.blocked?.resume_status, "backlog");
+});
+
 test("terminal corrections and invalid branch/PR postconditions are refused", () => {
   const terminal = card("CARD-0001", "done");
   assert.throws(() => applyTransition(board([terminal]), request({ kind: "deterministic_correction" })), /immutable/);

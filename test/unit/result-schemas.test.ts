@@ -16,6 +16,23 @@ test("public result schemas reject unknown fields and accept provider-compatible
   assert.equal(Value.Check(ProbeResultSchema, { schema_version: 1, dispatch_id: run, card_id: "CARD-0001", probe: "ci_status", status: "success", summary: "green", observations: [{ key: "checks", status: "pass", detail: "all pass" }], evidence: [] }), true);
 });
 
+test("requirements producer and checker use the none card identity", () => {
+  const requirements = {
+    ...baseProducer,
+    card_id: "none",
+    phase: "requirements",
+    artifacts: [],
+    planned_paths: [],
+    requirement_changes: [{ temporary_key: "new-requirement", action: "create", target_requirement: "none", title: "Requirement", body: "Body", acceptance: ["Observable"], supersedes: [] }],
+  };
+  assert.equal(Value.Check(ProducerResultSchema, requirements), true);
+  validateProducerResult(requirements as never, { dispatchId: run, cardId: "none", phase: "requirements" });
+  const checker = { schema_version: 1, dispatch_id: run, card_id: "none", phase: "requirements", status: "pass", summary: "ok", criteria: [{ key: "REQ-OBSERVABLE", verdict: "pass", evidence: [evidence] }], findings: [], evidence: [] };
+  assert.equal(Value.Check(CheckerResultSchema, checker), true);
+  validateCheckerResult(checker as never, { dispatchId: run, cardId: "none", phase: "requirements", criteria: ["REQ-OBSERVABLE"] });
+  assert.throws(() => validateCheckerResult({ ...checker, card_id: "CARD-0001" } as never, { dispatchId: run, cardId: "CARD-0001", phase: "requirements", criteria: ["REQ-OBSERVABLE"] }));
+});
+
 test("engine cross-field validation enforces completion contracts", () => {
   validateProducerResult(baseProducer as never, { dispatchId: run, cardId: "CARD-0001", phase: "design" });
   assert.throws(() => validateProducerResult({ ...baseProducer, questions: [{ question: "q", why_needed: "w", evidence: [] }] } as never, { dispatchId: run, cardId: "CARD-0001", phase: "design" }));

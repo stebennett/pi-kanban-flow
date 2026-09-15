@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import type { Config } from "./schemas.ts";
+import { parseModelSelector, type Config } from "./schemas.ts";
 
 const AGENT_NAMES = new Set([
   "requirements-producer", "requirements-checker", "design-producer", "design-checker", "split-decider", "implementer", "reviewer", "ship-producer", "ship-checker",
@@ -15,6 +15,11 @@ export function validateConfigSemantics(config: Config): void {
   if (new Set(config.review.lenses).size !== config.review.lenses.length) fail("review lenses must be unique");
   const overrides = Object.keys(config.agent_models.overrides);
   if (overrides.some((name) => !AGENT_NAMES.has(name))) fail(`unknown agent model override ${overrides.find((name) => !AGENT_NAMES.has(name))}`);
+  for (const selector of Object.values(config.agent_models.overrides)) {
+    if (selector !== undefined) {
+      try { parseModelSelector(selector); } catch (error) { fail(error instanceof Error ? error.message : "model selector is invalid"); }
+    }
+  }
   for (const [name, command] of Object.entries(config.project_commands)) {
     if (!Array.isArray(command) || command.length < 1 || command.length > 64) fail(`${name} command must be a non-empty argv array`);
     if (command.some((argument) => !singleLine(argument) || argument.length > 4096)) fail(`${name} command contains an invalid argument`);

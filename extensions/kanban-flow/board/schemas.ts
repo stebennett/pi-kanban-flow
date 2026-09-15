@@ -14,7 +14,7 @@ const HISTORY_ID = Type.String({ pattern: "^KFH-\\d{8}T\\d{9}Z-[0-9a-hjkmnp-tv-z
 const RUN_ID = Type.String({ pattern: "^KFRUN-\\d{8}T\\d{9}Z-[0-9a-hjkmnp-tv-z]{8}$" });
 const PATH = Type.String({ pattern: "^(?!/)(?!.*\\\\)(?!.*\\u0000)(?!.*[\\r\\n])(?!(?:^|/)\\.{1,2}(?:/|$))(?!(?:.*)/(?:\\.{1,2})(?:/|$)).+$", maxLength: 4096 });
 const SEMVER = Type.String({ pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$", minLength: 1, maxLength: 128 });
-const MODEL_SELECTOR = Type.String({ pattern: "^[^\\s/]+/[^\\s:]+(?::(?:off|minimal|low|medium|high|xhigh))?$", minLength: 3, maxLength: 512 });
+const MODEL_SELECTOR = Type.String({ pattern: "^[^\\s\\u0000-\\u001f\\u007f]+$", minLength: 3, maxLength: 512 });
 const REPOSITORY_ID = "^(?:[a-z0-9]|[a-z0-9][a-z0-9._-]{0,98}[a-z0-9_-])/(?:[a-z0-9]|[a-z0-9][a-z0-9._-]{0,98}[a-z0-9_-])$";
 const SINGLE_LINE = (maxLength: number) => Type.String({ minLength: 1, maxLength, pattern: NO_NEWLINE });
 const MAYBE_TIMESTAMP = Type.Union([TIMESTAMP, Type.Null()]);
@@ -85,10 +85,10 @@ export const BoardStateSchema = Type.Object(
 
 export const MigrationSchema = Type.Object(
   {
-    source: SINGLE_LINE(100),
-    source_version: SINGLE_LINE(64),
+    source_harness: Type.Literal("claude"),
+    source_version: SEMVER,
+    source_commit: OBJECT_ID,
     migrated_at: TIMESTAMP,
-    operation_id: OPERATION_ID,
   },
   { additionalProperties: false },
 );
@@ -181,6 +181,26 @@ export const ConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 export type Config = Static<typeof ConfigSchema>;
+
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+/** Parse the permitted provider/model selector without forbidding legal `:` or `/` in a model ID. */
+export function parseModelSelector(value: string): { provider: string; model: string; thinking: ThinkingLevel | null } {
+  if (typeof value !== "string" || value.length < 3 || value.length > 512 || /[\s\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error("model selector must be a bounded provider/model identifier without whitespace or controls");
+  }
+  let selector = value;
+  let thinking: ThinkingLevel | null = null;
+  const suffix = value.match(/:(off|minimal|low|medium|high|xhigh|max)$/);
+  if (suffix) {
+    thinking = suffix[1] as ThinkingLevel;
+    selector = value.slice(0, -suffix[0].length);
+  }
+  const separator = selector.indexOf("/");
+  if (separator <= 0 || separator === selector.length - 1) throw new Error("model selector must contain non-empty provider and model identifiers");
+  return { provider: selector.slice(0, separator), model: selector.slice(separator + 1), thinking };
+}
 
 export const PRRecordSchema = Type.Object(
   {

@@ -3,7 +3,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { EvidenceSchema, FindingSchema } from "./schemas.ts";
 
 const RUN_ID = Type.String({ pattern: "^KFRUN-\\d{8}T\\d{9}Z-[0-9a-hjkmnp-tv-z]{8}$" });
-const CARD_OR_NONE = Type.Union([Type.String({ pattern: "^CARD-[0-9]{4}$" }), Type.Literal("none")]);
+const CARD_OR_NONE = Type.String({ pattern: "^(?:CARD-[0-9]{4}|none)$" });
 const TEXT = (maxLength: number) => Type.String({ minLength: 1, maxLength, pattern: "^[^\\u0000\\r\\n]*$" });
 const MARKDOWN = (maxLength: number) => Type.String({ maxLength, pattern: "^[^\\u0000]*$" });
 const NON_EMPTY_MARKDOWN = (maxLength: number) => Type.String({ minLength: 1, maxLength, pattern: "^[^\\u0000]*$" });
@@ -39,7 +39,7 @@ export type ProducerResult = Static<typeof ProducerResultSchema>;
 
 export const CheckerCriterionSchema = Type.Object({ key: TEXT(128), verdict: StringEnum(["pass", "fail", "inconclusive"] as const), evidence: Type.Array(EvidenceSchema, { minItems: 1, maxItems: 128 }) }, { additionalProperties: false });
 export const CheckerResultSchema = Type.Object({
-  schema_version: Type.Literal(1), dispatch_id: RUN_ID, card_id: Type.String({ pattern: "^CARD-[0-9]{4}$" }), phase: StringEnum(["requirements", "design", "ship"] as const), status: StringEnum(["pass", "fail", "inconclusive"] as const), summary: TEXT(500),
+  schema_version: Type.Literal(1), dispatch_id: RUN_ID, card_id: CARD_OR_NONE, phase: StringEnum(["requirements", "design", "ship"] as const), status: StringEnum(["pass", "fail", "inconclusive"] as const), summary: TEXT(500),
   criteria: Type.Array(CheckerCriterionSchema, { minItems: 1, maxItems: 128 }), findings: Type.Array(FindingSchema, { maxItems: 128 }), evidence: Type.Array(EvidenceSchema, { maxItems: 128 }),
 }, { additionalProperties: false });
 export type CheckerResult = Static<typeof CheckerResultSchema>;
@@ -74,7 +74,7 @@ export function validateProducerResult(result: ProducerResult, expected: { dispa
   if (result.phase !== "design" && result.planned_paths.length > 0) fail(`${result.phase} producer cannot return planned paths`);
   if (result.phase === "design" && result.status === "completed" && result.planned_paths.length === 0) fail("completed design producer requires planned paths");
   if (result.phase === "requirements" && result.status === "completed" && result.requirement_changes.length === 0 && result.card_changes.length === 0) fail("completed requirements producer requires a change");
-  if (result.status === "completed" && result.artifacts.length === 0) fail("completed producer requires an artifact");
+  if (result.status === "completed" && result.phase !== "requirements" && result.artifacts.length === 0) fail("completed non-requirements producer requires an artifact");
   noDuplicates(result.planned_paths.map((entry) => entry.path), "planned paths");
   noDuplicates(result.requirement_changes.map((entry) => entry.temporary_key).filter((key) => key !== "none"), "requirement temporary keys");
   noDuplicates(result.card_changes.map((entry) => entry.temporary_key).filter((key) => key !== "none"), "card temporary keys");
@@ -82,6 +82,7 @@ export function validateProducerResult(result: ProducerResult, expected: { dispa
 
 export function validateCheckerResult(result: CheckerResult, expected: { dispatchId: string; cardId: string; phase: CheckerResult["phase"]; criteria: readonly string[] }): void {
   if (result.dispatch_id !== expected.dispatchId || result.card_id !== expected.cardId || result.phase !== expected.phase) fail("checker dispatch identity does not match");
+  if ((result.phase === "requirements") !== (result.card_id === "none")) fail("requirements checkers require card_id none and card-level checkers require CARD-* identity");
   const keys = result.criteria.map((criterion) => criterion.key);
   noDuplicates(keys, "checker criteria");
   if (keys.length !== expected.criteria.length || keys.some((key, index) => key !== expected.criteria[index])) fail("checker criteria do not match the dispatch");

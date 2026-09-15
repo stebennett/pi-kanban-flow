@@ -349,7 +349,7 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
       const count = card.rework.design;
       if (count >= request.designLimit) {
         const evidence = event.evidence ?? [];
-        changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, "design rework budget exhausted", evidence, "designing") });
+        changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, "design rework budget exhausted", evidence, card.status) });
       } else {
         changed = withHistory(card, request.metadata, REWORK_KINDS.design, "designing", {
           started_at: card.started_at ?? request.metadata.at,
