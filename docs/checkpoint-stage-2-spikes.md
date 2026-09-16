@@ -8,6 +8,10 @@
   `agent_end` without any tool result or `toolUse` stop reason. This confirms
   that process success and final events alone are insufficient: the parent
   runner must reject prose-only completion.
+- A real Pi run can terminate through a sibling result tool when that tool is
+  allowlisted. The final `turn_end.toolResults[].toolName` exposes that exact
+  name, so the parent must enforce the expected role tool independently of
+  process success and `toolUse` stop reason.
 - A real Pi 0.85.1 JSON-mode run with OpenAI Codex invoked one explicitly
   loaded terminating tool. It exited `0`, emitted the session header,
   `turn_end`, and `agent_end`, reported `stopReason: toolUse`, and exposed
@@ -60,7 +64,7 @@ node --test --import tsx test/integration/stage-2-prerequisites.test.ts
 
 This checkpoint does **not** close Work unit 0. The following mandatory proofs
 remain: duplicate, invalid,
-wrong-role, sibling-tool, post-result-conflict, malformed, and size-limit
+wrong-role payload, duplicate/post-result-conflict, malformed, and size-limit
 structured-result cases; adversarial archive extraction and strict/broad
 path-policy escape cases; command timeout/abort/exact-diff policy; production attestation schema/secret/path checks;
 and the minimum/current macOS and Linux matrix for process cleanup.
