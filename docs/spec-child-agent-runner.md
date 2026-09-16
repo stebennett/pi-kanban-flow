@@ -16,7 +16,7 @@ pi --mode json -p --no-session \
 
 The runner adds only the role's tools/context/skills. It passes argv directly without a shell. Child sessions are never recovery sources.
 
-The command always includes all four resource-disable flags and `--no-builtin-tools`. It explicitly loads one package-owned role extension with `-e`, selects only that policy's package tools with `--tools`, and adds each approved broad skill with a separate `--skill` path. System protocol, normalized project context, and dispatch inputs are assembled into a mode-`0600` temporary prompt passed by `--append-system-prompt`; the user prompt contains only the bounded task envelope and dispatch ID. No configured value is interpolated into shell text.
+The command always includes all four resource-disable flags and `--no-builtin-tools`. It explicitly loads one package-owned role extension with `-e` and selects only that policy's package tools with `--tools`. The parent reads each approved broad-policy skill through its validated in-repository path, normalizes and bounds its content, and injects it into the mode-`0600` temporary system prompt; it does not rely on `--skill` resource discovery. System protocol, normalized project context, and dispatch inputs are assembled into that prompt passed by `--append-system-prompt`; the user prompt contains only the bounded task envelope and dispatch ID. No configured value is interpolated into shell text.
 
 ## Repository-scoped agent discovery
 
