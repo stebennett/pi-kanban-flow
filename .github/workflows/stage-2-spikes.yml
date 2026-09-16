@@ -1,0 +1,26 @@
+name: Stage 2 prerequisite spikes
+
+on:
+  pull_request:
+    paths:
+      - "test/integration/stage-2-process-escalation-spike.test.ts"
+      - ".github/workflows/stage-2-spikes.yml"
+  workflow_dispatch:
+
+jobs:
+  process-cleanup:
+    name: process cleanup (${{ matrix.os }}, Node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        node: [22.19.0, 24.x]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: node --test --import tsx test/integration/stage-2-process-escalation-spike.test.ts
