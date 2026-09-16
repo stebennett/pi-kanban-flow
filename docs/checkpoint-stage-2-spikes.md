@@ -35,6 +35,11 @@
   every durable string field rather than argv alone. Credential-bearing URLs
   are redacted independently of configured secret names. This is feasibility
   evidence only; the production attestation module remains gated.
+- A named-command prototype proves the parent can select only a configured
+  command name and execute its configured executable/argv directly. A
+  shell-metacharacter canary remains a single literal argument and cannot
+  create its marker file. Production command timeout, abort, exact-diff, and
+  policy enforcement remain gated.
 - Pi 0.85.1 exposes `ProjectTrustStore.getEntry()` through
   `@earendil-works/pi-coding-agent`. The integration spike proves canonical
   ancestor lookup and distinguishes persisted `true`, `false`, and absent
@@ -55,6 +60,6 @@ This checkpoint does **not** close Work unit 0. The following mandatory proofs
 remain: duplicate, invalid,
 wrong-role, sibling-tool, post-result-conflict, malformed, and size-limit
 structured-result cases; adversarial archive extraction and strict/broad
-path-policy escape cases; named-command policy; production attestation schema/secret/path checks;
+path-policy escape cases; command timeout/abort/exact-diff policy; production attestation schema/secret/path checks;
 and SIGTERM grace/SIGKILL cleanup on the minimum/current macOS and Linux
 matrix.
