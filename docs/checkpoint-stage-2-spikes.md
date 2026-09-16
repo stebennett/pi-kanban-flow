@@ -25,6 +25,11 @@
   the validated skill and supplies its normalized, bounded content through the
   mode-`0600` `--append-system-prompt` file. A real Pi spike proves that this
   prompt content reaches the child while `AGENTS.md` remains excluded.
+- Real noninteractive Pi runs prove both `--approve` and
+  `defaultProjectTrust: "always"` load project resources without creating a
+  saved decision. The runner must therefore inspect the persisted
+  `ProjectTrustStore` entry and require `decision === true`; runtime trust is
+  insufficient. The test restores settings and removes its temporary entry.
 - A noninteractive real Pi child started without `--approve` loaded a temporary
   project extension only after the test wrote a saved `yes` decision through
   `ProjectTrustStore`; the test removes that temporary saved decision on exit.
