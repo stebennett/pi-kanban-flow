@@ -21,6 +21,26 @@ function execute(command: string, args: readonly string[], cwd: string): Promise
   });
 }
 
+test("real Pi JSON prose-only completion has no terminating result tool", { skip: !runRealSpike }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "kanban-flow-json-prose-spike-"));
+  try {
+    const result = await execute("pi", [
+      "--mode", "json", "-p", "--no-session",
+      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-tools",
+      "--model", "openai-codex/gpt-5.6-luna", "--thinking", "low",
+      "Respond with exactly the word prose.",
+    ], root);
+    assert.equal(result.code, 0, result.stderr);
+    const events = result.stdout.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    const turnEnd = events.find((event) => event.type === "turn_end") as { message?: { stopReason?: string }; toolResults?: unknown[] } | undefined;
+    assert.notEqual(turnEnd?.message?.stopReason, "toolUse");
+    assert.deepEqual(turnEnd?.toolResults, []);
+    assert.ok(events.some((event) => event.type === "agent_end"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("real Pi JSON resource and terminating-result spike", { skip: !runRealSpike }, async () => {
   const root = await mkdtemp(join(tmpdir(), "kanban-flow-json-spike-"));
   const extension = join(root, "result-spike.ts");
