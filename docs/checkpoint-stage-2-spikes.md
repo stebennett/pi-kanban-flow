@@ -39,7 +39,11 @@
   project extension only after the test wrote a saved `yes` decision through
   `ProjectTrustStore`; the test removes that temporary saved decision on exit.
   This proves the compatible persisted-trust adapter and child reuse boundary.
-- A disposable real Git repository proves direct-argv `git archive --format=tar`
+- An adversarial archive-entry validation prototype rejects absolute and
+  traversal names, duplicate paths, special files, hardlinks, and symlink
+  escapes before extraction while permitting an in-root relative symlink. The
+  production extractor must apply these checks to parsed tar metadata.
+- A disposable real Git repository proves direct-argv `git archive --format=tar`},{
   from an explicit commit produces an exact immutable snapshot: a later mutable
   checkout change is absent from the archive. The future materializer must
   parse and validate entries before extraction; this does not authorize
