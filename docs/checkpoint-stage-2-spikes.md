@@ -44,9 +44,11 @@
   `@earendil-works/pi-coding-agent`. The integration spike proves canonical
   ancestor lookup and distinguishes persisted `true`, `false`, and absent
   decisions in an isolated agent directory.
-- On the current macOS host, a detached process group receives `SIGTERM` and
-  its spawned descendant is no longer signalable. The test intentionally uses
-  no board repository or child Pi session.
+- On the current macOS host, a detached process group receives `SIGTERM`, a
+  full five-second grace window, and then `SIGKILL` when the parent and
+  descendant deliberately ignore TERM. The descendant is no longer signalable
+  after group cleanup. The test intentionally uses no board repository or
+  child Pi session.
 
 ## Command
 
@@ -61,5 +63,4 @@ remain: duplicate, invalid,
 wrong-role, sibling-tool, post-result-conflict, malformed, and size-limit
 structured-result cases; adversarial archive extraction and strict/broad
 path-policy escape cases; command timeout/abort/exact-diff policy; production attestation schema/secret/path checks;
-and SIGTERM grace/SIGKILL cleanup on the minimum/current macOS and Linux
-matrix.
+and the minimum/current macOS and Linux matrix for process cleanup.
