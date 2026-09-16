@@ -11,12 +11,12 @@ Children run with explicit resources:
 ```text
 pi --mode json -p --no-session \
   --no-extensions --no-skills --no-prompt-templates --no-context-files \
-  -e <package-role-result-extension> ...
+  --no-builtin-tools -e <package-role-result-extension> ...
 ```
 
 The runner adds only the role's tools/context/skills. It passes argv directly without a shell. Child sessions are never recovery sources.
 
-The command always includes all four `--no-*` resource flags. It explicitly loads one package-owned role extension with `-e`, selects only that policy's package tools with `--tools`, and adds each approved broad skill with a separate `--skill` path. System protocol, normalized project context, and dispatch inputs are assembled into a mode-`0600` temporary prompt passed by `--append-system-prompt`; the user prompt contains only the bounded task envelope and dispatch ID. No configured value is interpolated into shell text.
+The command always includes all four resource-disable flags and `--no-builtin-tools`. It explicitly loads one package-owned role extension with `-e`, selects only that policy's package tools with `--tools`, and adds each approved broad skill with a separate `--skill` path. System protocol, normalized project context, and dispatch inputs are assembled into a mode-`0600` temporary prompt passed by `--append-system-prompt`; the user prompt contains only the bounded task envelope and dispatch ID. No configured value is interpolated into shell text.
 
 ## Repository-scoped agent discovery
 
