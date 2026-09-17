@@ -28,6 +28,11 @@ test("policy and dispatch argv are deterministic and disable unrelated resources
   } finally { await plan.cleanup(); }
 });
 
+test("broad-write dispatches require an engine-owned runtime tool policy", async () => {
+  const implementationAgent = { ...agent, name: "implementer" as const, path: "agents/implementer.md" };
+  await assert.rejects(createDispatchPlan({ dispatchId: "KFRUN-20260115T103000000Z-abcdefgh", agent: implementationAgent, model: { ...parent, inherited: true }, policy: policyForAgent("implementer"), cwd: process.cwd(), systemPrompt: "bounded", task: "implement" }), /tool policy/);
+});
+
 test("engine-owned mapping keeps producers sequential by policy and implementation broad", () => {
   assert.equal(policyForAgent("requirements-producer").requiresPersistedTrust, true);
   assert.equal(policyForAgent("implementer").name, "broad-write");

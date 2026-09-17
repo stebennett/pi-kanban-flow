@@ -14,6 +14,7 @@ function octal(block: Buffer, start: number, length: number): number { const val
 export function parseGitArchiveTar(archive: Buffer): TarEntry[] {
   const entries: TarEntry[] = [];
   const seen = new Set<string>();
+  let pax: Record<string, string> = {};
   for (let offset = 0; offset + 512 <= archive.length;) {
     const header = archive.subarray(offset, offset + 512); offset += 512;
     if (header.every((byte) => byte === 0)) break;
@@ -23,18 +24,20 @@ export function parseGitArchiveTar(archive: Buffer): TarEntry[] {
     const body = archive.subarray(offset, offset + size); offset += Math.ceil(size / 512) * 512;
     const typeFlag = String.fromCharCode(header[156] || 48);
     if (typeFlag === "g") continue;
-    const path = normalizeRepositoryPath(name);
+    if (typeFlag === "x") { pax = {}; let cursor = 0; const text = body.toString("utf8"); while (cursor < text.length) { const space = text.indexOf(" ", cursor); const length = Number.parseInt(text.slice(cursor, space), 10); if (!Number.isInteger(length) || length <= 0) throw new Error("Malformed PAX archive header"); const record = text.slice(space + 1, cursor + length - 1); const equals = record.indexOf("="); if (equals > 0) pax[record.slice(0, equals)] = record.slice(equals + 1); cursor += length; } continue; }
+    const path = normalizeRepositoryPath(pax.path ?? name);
     if (seen.has(path)) throw new Error(`Duplicate normalized archive path: ${path}`);
     seen.add(path);
     if (typeFlag === "0" || typeFlag === "\0") entries.push({ path, type: "file", body: Buffer.from(body) });
     else if (typeFlag === "5") entries.push({ path, type: "directory", body: Buffer.alloc(0) });
     else if (typeFlag === "2") {
-      const link = field(header, 157, 100);
+      const link = pax.linkpath ?? field(header, 157, 100);
       if (!link || isAbsolute(link) || link.includes("\\") || link.includes("\u0000")) throw new Error(`Unsafe archive link: ${path}`);
       const resolved = posix.normalize(posix.join(posix.dirname(path), link));
       if (resolved === ".." || resolved.startsWith("../") || isAbsolute(resolved)) throw new Error(`Archive link escapes snapshot: ${path}`);
       entries.push({ path, type: "symlink", body: Buffer.alloc(0), link });
     } else throw new Error(`Unsupported archive entry type ${JSON.stringify(typeFlag)}: ${path}`);
+    pax = {};
   }
   const paths = new Set(entries.map((entry) => entry.path));
   for (const entry of entries.filter((value) => value.type === "symlink")) {

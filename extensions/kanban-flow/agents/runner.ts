@@ -16,20 +16,23 @@ export interface ParallelDispatchOutcome { index: number; state: "completed" | "
 export interface ParallelDispatchResult { outcomes: ParallelDispatchOutcome[]; usage: Record<string, number>; ok: boolean }
 const extensionFiles = { producer: "producer.ts", checker: "checker.ts", reviewer: "reviewer.ts", splitDecision: "split-decision.ts", probe: "probe.ts" } as const;
 
-export async function createDispatchPlan(options: { dispatchId: string; agent: AgentDefinition; model: ResolvedModel; policy: RolePolicy; cwd: string; systemPrompt: string; task: string; executable?: string }): Promise<DispatchPlan> {
+export async function createDispatchPlan(options: { dispatchId: string; agent: AgentDefinition; model: ResolvedModel; policy: RolePolicy; cwd: string; systemPrompt: string; task: string; executable?: string; broadToolPolicy?: { planned: Record<string, "create" | "modify" | "delete">; commands: Record<string, { executable: string; argv: string[] }>; protectedPrefixes?: string[]; timeoutMs?: number } }): Promise<DispatchPlan> {
+  if (options.policy.name === "broad-write" && !options.broadToolPolicy) throw new Error("Broad-write dispatch requires an engine-owned tool policy");
   const directory = await mkdtemp(join(tmpdir(), "kanban-dispatch-")); await chmod(directory, 0o700);
   const promptPath = join(directory, "system-prompt.md"); await writeFile(promptPath, options.systemPrompt, { mode: 0o600, flag: "wx" });
+  let policyPath: string | undefined;
+  if (options.policy.name === "broad-write") { policyPath = join(directory, "tool-policy.json"); await writeFile(policyPath, JSON.stringify(options.broadToolPolicy), { mode: 0o600, flag: "wx" }); }
   const extension = await resolvePackageAsset(`extensions/kanban-flow/agents/role-extensions/${extensionFiles[options.policy.resultRole]}`);
   const taskEnvelope = assembleTaskEnvelope(options.dispatchId, options.task);
   const argv = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-builtin-tools", "-e", extension, "--tools", options.policy.tools.join(","), "--model", `${options.model.provider}/${options.model.id}`, "--thinking", options.model.thinking, "--append-system-prompt", promptPath, "--", taskEnvelope];
   const redactedArgv = argv.map((value) => value === extension ? "<PACKAGE_ROOT>/extensions/kanban-flow/agents/role-extensions/<ROLE>.ts" : value === promptPath ? "<TEMP_ROOT>/system-prompt.md" : value);
-  const environment = { ...process.env, KANBAN_FLOW_TOOL_ROOT: options.cwd };
+  const environment = { ...process.env, KANBAN_FLOW_TOOL_ROOT: options.cwd, ...(policyPath ? { KANBAN_FLOW_POLICY_FILE: policyPath } : {}) };
   return { ...options, executable: options.executable ?? "pi", argv, redactedArgv, environment, promptPath, taskEnvelope, async cleanup() { await rm(directory, { recursive: true, force: true }); } };
 }
 
 export async function executeDispatch(plan: DispatchPlan, expectation: RunExpectation, signal?: AbortSignal): Promise<DispatchSuccess> {
   if (signal?.aborted) { await plan.cleanup(); throw new Error("Child dispatch aborted before spawn"); }
-  const startedAt = new Date().toISOString(); const evaluator = new JsonRunEvaluator(expectation, plan.policy.limits.maxEvents); const decoder = new JsonLineDecoder(plan.policy.limits.lineBytes);
+  const startedAt = new Date().toISOString(); const evaluator = new JsonRunEvaluator({ ...expectation, plannedThinking: plan.model.thinking }, plan.policy.limits.maxEvents); const decoder = new JsonLineDecoder(plan.policy.limits.lineBytes);
   const child = spawnProcessGroup(plan.executable, plan.argv, plan.cwd, plan.environment); let stdoutBytes = 0; let stderrBytes = 0; let stderr = ""; let failure: Error | undefined; let timedOut = false;
   const fail = (error: unknown) => { failure ??= error instanceof Error ? error : new Error(String(error)); void terminateProcessGroup(child); };
   child.stdout!.on("data", (chunk: Buffer) => { try { stdoutBytes += chunk.length; if (stdoutBytes > plan.policy.limits.stdoutBytes) throw new Error("Child stdout limit exceeded"); for (const line of decoder.push(chunk)) { if (!line) continue; evaluator.accept(JSON.parse(line)); } } catch (error) { fail(error); } });

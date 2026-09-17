@@ -35,6 +35,19 @@ test("diagnostics are deterministic, read-only, and report drift with relative p
   assert.equal(diagnosticText(report).includes("/private/absolute/path"), false);
 });
 
+test("diagnostics report trust, packaged agents, overrides, and inherited model capability without spawning", async () => {
+  let calls = 0;
+  const report = await diagnose(".", {}, dependencies({
+    readRepository: async () => ({ ...snapshot, config: { agents: { allow_project_overrides: true } } }) as never,
+    parentModel: { provider: "openai", id: "gpt-5.4", supportsTools: true },
+    agentReadiness: async () => { calls++; return { persisted_trust: true, packaged_available: ["requirements-producer", "requirements-checker"], unavailable: ["design-producer"], active_overrides: [{ name: "requirements-producer", path: ".pi/agents/requirements-producer.md", sha256: "a".repeat(64) }], ignored_overrides: [], inherited_model: { provider: "openai", id: "gpt-5.4", supports_tools: true } }; },
+  }));
+  assert.equal(calls, 1);
+  assert.equal(report.agents?.persisted_trust, true);
+  assert.deepEqual(report.agents?.packaged_available, ["requirements-producer", "requirements-checker"]);
+  assert.equal(report.agents?.inherited_model?.supports_tools, true);
+});
+
 test("marker queries are opt-in and use the injected authority", async () => {
   let calls = 0;
   const report = await diagnose(".", { query_markers: true }, dependencies({

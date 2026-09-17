@@ -23,8 +23,8 @@ export function assertSupportedPiVersion(version: string = VERSION): void {
 export default function kanbanFlowExtension(pi: ExtensionAPI): void {
   assertSupportedPiVersion(VERSION);
 
-  const runDiagnostic = async (cwd: string, queryMarkers: boolean): Promise<string> =>
-    diagnosticText(await diagnose(cwd, { query_markers: queryMarkers }));
+  const runDiagnostic = async (cwd: string, queryMarkers: boolean, model?: { provider: string; id: string }): Promise<string> =>
+    diagnosticText(await diagnose(cwd, { query_markers: queryMarkers }, { parentModel: model ? { ...model, supportsTools: true } : undefined }));
 
   pi.registerCommand("kanban-validate", {
     description: "Validate the kanban board without mutation",
@@ -34,7 +34,7 @@ export default function kanbanFlowExtension(pi: ExtensionAPI): void {
         ctx.ui.notify("Usage: /kanban-validate [--markers]", "warning");
         return;
       }
-      const report = await runDiagnostic(ctx.cwd, queryMarkers);
+      const report = await runDiagnostic(ctx.cwd, queryMarkers, ctx.model);
       ctx.ui.notify(report, report.includes('"ok": true') ? "info" : "warning");
     },
   });
@@ -45,7 +45,7 @@ export default function kanbanFlowExtension(pi: ExtensionAPI): void {
     description: "Read-only kanban board validation and compatibility diagnostics.",
     parameters: validateParameters,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const report = await diagnose(ctx.cwd, params);
+      const report = await diagnose(ctx.cwd, params, { parentModel: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id, supportsTools: true } : undefined });
       return { content: [{ type: "text", text: diagnosticText(report) }], details: report };
     },
   });
