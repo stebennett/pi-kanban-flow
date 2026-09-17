@@ -57,6 +57,10 @@
   create/modify/delete action and rejects `.git`, board, design, traversal,
   and unplanned accesses. Realpath/symlink-swap and nested-worktree checks
   remain required before a production broad tool can be authorized.
+- A command-limits prototype proves direct child execution can enforce a hard
+  timeout and output-byte cap. An allowed command can still mutate an
+  unplanned file, proving the parent must inspect the exact resulting diff and
+  reject side effects rather than trusting exit status.
 - A named-command prototype proves the parent can select only a configured
   command name and execute its configured executable/argv directly. A
   shell-metacharacter canary remains a single literal argument and cannot
@@ -84,5 +88,5 @@ This checkpoint does **not** close Work unit 0. The following mandatory proofs
 remain: duplicate, invalid,
 wrong-role payload, duplicate/post-result-conflict, malformed, and size-limit
 structured-result cases; adversarial archive extraction and strict/broad
-path-policy escape cases; command timeout/abort/exact-diff policy; production attestation schema/secret/path checks;
+path-policy escape cases; command abort and production exact-diff policy; production attestation schema/secret/path checks;
 and the minimum/current macOS and Linux matrix for process cleanup.
