@@ -247,7 +247,7 @@ stop_reason: toolUse
 payload: { ... }
 ```
 
-Model identity is taken from authoritative final Pi events/dispatch resolution, not child prose. The engine chooses artifact destinations and rejects model-proposed paths outside the role contract.
+Provider and model identity are taken from authoritative final Pi events, not child prose. Pi 0.85.1 final JSON events do not include the effective thinking level; schema-version-1 therefore attests thinking from the parent-resolved explicit `--thinking` dispatch value and requires final provider/model to match that dispatch. If a later supported Pi event exposes effective thinking, the runner must compare and attest it. The engine chooses artifact destinations and rejects model-proposed paths outside the role contract.
 
 Durable attestation never stores an absolute package, snapshot, checkout, or worktree path. `execution_context` records logical repository/branch/commit identity. Attested argv replaces machine-local roots with the literal tokens `<PACKAGE_ROOT>`, `<SNAPSHOT_ROOT>`, `<WORKTREE_ROOT>`, and `<TEMP_ROOT>` and redacts credentials and environment-derived secrets. The machine-local dispatch log may record canonical paths under the common Git operation directory but is not board state.
 
@@ -264,7 +264,7 @@ Pi's tool `terminate: true` is a hint, not proof. A child succeeds only when:
 3. the result call is in the final accepted assistant turn and has no nonterminating sibling tool call;
 4. no later assistant output conflicts with it;
 5. `agent_end` is observed;
-6. process exit code and stop reason are acceptable;
+6. process exit code and stop reason are acceptable; `agent_settled` may follow `agent_end` and is validated as a known lifecycle event;
 7. run/dispatch ID and expected role/phase/card match.
 
 Missing, duplicate, invalid, mismatched, or prose-only completion fails. A successful payload is not itself permission to transition; the engine applies state-machine rules.

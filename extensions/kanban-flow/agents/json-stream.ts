@@ -4,7 +4,7 @@ import type { ResultRole, StructuredResult } from "./result-tools.ts";
 
 const schemas = { producer: ProducerResultSchema, checker: CheckerResultSchema, reviewer: ReviewerResultSchema, splitDecision: SplitDecisionResultSchema, probe: ProbeResultSchema } as const;
 const roleTools = new Set(["submit_producer_result", "submit_checker_result", "submit_reviewer_result", "submit_split_decision", "submit_probe_result"]);
-const allowedEvents = new Set(["agent_start", "agent_end", "turn_start", "turn_end", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end", "queue_update", "compaction_start", "compaction_end", "auto_compaction_start", "auto_compaction_end", "retry_start", "retry_end"]);
+const allowedEvents = new Set(["agent_start", "agent_end", "agent_settled", "turn_start", "turn_end", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end", "queue_update", "compaction_start", "compaction_end", "auto_compaction_start", "auto_compaction_end", "retry_start", "retry_end"]);
 
 export class JsonLineDecoder {
   #buffer = Buffer.alloc(0);
@@ -13,7 +13,7 @@ export class JsonLineDecoder {
   finish(): void { if (this.#buffer.length > 0) throw new Error("JSON event stream ended with an unterminated line"); }
 }
 
-export interface RunExpectation { role: ResultRole; tool: string; dispatchId: string; cardId: string; phase?: string; lens?: string; probe?: string; criteria?: readonly string[]; observations?: readonly string[] }
+export interface RunExpectation { role: ResultRole; tool: string; dispatchId: string; cardId: string; phase?: string; lens?: string; probe?: string; criteria?: readonly string[]; observations?: readonly string[]; plannedThinking?: string }
 export interface RuntimeEvidence { payload: StructuredResult; provider: string; model: string; thinking: string; stopReason: string; usage: Record<string, unknown>; eventCount: number }
 
 export class JsonRunEvaluator {
@@ -46,7 +46,8 @@ export class JsonRunEvaluator {
     else if (this.expected.role === "reviewer") validateReviewerResult(result, { dispatchId: this.expected.dispatchId, cardId: this.expected.cardId, lens: this.expected.lens as any });
     else if (this.expected.role === "splitDecision") validateSplitDecisionResult(result, { dispatchId: this.expected.dispatchId, cardId: this.expected.cardId });
     else validateProbeResult(result, { dispatchId: this.expected.dispatchId, cardId: this.expected.cardId, probe: this.expected.probe as any, observations: this.expected.observations });
-    if (!this.#provider || !this.#model || !this.#thinking) throw new Error("Final runtime model metadata is incomplete");
-    return { payload: call.args, provider: this.#provider, model: this.#model, thinking: this.#thinking, stopReason: this.#stopReason, usage: this.#usage, eventCount: this.eventCount };
+    const thinking = this.#thinking || this.expected.plannedThinking || "";
+    if (!this.#provider || !this.#model || !thinking) throw new Error("Final runtime model metadata is incomplete");
+    return { payload: call.args, provider: this.#provider, model: this.#model, thinking, stopReason: this.#stopReason, usage: this.#usage, eventCount: this.eventCount };
   }
 }

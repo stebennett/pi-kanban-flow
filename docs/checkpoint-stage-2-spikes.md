@@ -17,7 +17,10 @@ unit, integration, and release gates.
   policy; the parent must validate, normalize, bound, and inject approved
   skill content through the mode-`0600` appended system-prompt file.
 - **JSON/result protocol:** real Pi JSON sessions expose authoritative
-  `turn_end`, `agent_end`, provider/model/usage, and `toolUse`. Prose-only and
+  `turn_end`, `agent_end`, provider/model/usage, and `toolUse`. Pi 0.85.1 does
+  not repeat effective thinking in final events, so the versioned contract now
+  attests the parent-resolved explicit thinking flag while requiring final
+  provider/model to match. Prose-only and
   sibling-tool completions prove that a successful exit is insufficient. The
   result-stream matrix covers malformed, wrong-role, duplicate, post-result,
   and oversized inputs.

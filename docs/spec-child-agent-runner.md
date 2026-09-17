@@ -93,7 +93,7 @@ Consume LF-delimited JSON exactly as documented by Pi; do not use generic Unicod
 - validates every JSON record and session header;
 - uses final `message_end`, `tool_execution_end`, and `agent_end` events as authoritative;
 - enforces event and byte limits;
-- captures usage/model/stop metadata;
+- captures usage/provider/model/stop metadata; Pi 0.85.1 omits effective thinking from final events, so thinking is attested from the parent-resolved explicit dispatch flag and final provider/model must match the plan;
 - validates the successful-completion rules in `spec-structured-results.md`;
 - preserves configured ordering for parallel results.
 

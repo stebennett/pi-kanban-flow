@@ -4,6 +4,7 @@ import { readBoardRepository, type BoardSnapshot } from "../board/repository.ts"
 import { DirectProcessRunner, type ProcessRunner } from "../state-pr/process.ts";
 import { discoverManagedPullRequests, type GitHubAdapter, type ManagedPullRequest } from "../state-pr/github.ts";
 import { GhCliAdapter } from "../state-pr/github.ts";
+import { discoverAgents } from "../agents/discover.ts";
 
 export const validateParameters = Type.Object(
   { query_markers: Type.Optional(Type.Boolean()) },
@@ -37,6 +38,14 @@ export interface DiagnosticReport {
     markers_queried: boolean;
     managed_prs: readonly ManagedPullRequestSummary[];
   };
+  readonly agents?: {
+    persisted_trust: boolean;
+    packaged_available: readonly string[];
+    unavailable: readonly string[];
+    active_overrides: readonly { name: string; path: string; sha256?: string }[];
+    ignored_overrides: readonly { name: string; path: string; reason?: string }[];
+    inherited_model: { provider: string; id: string; supports_tools: boolean } | null;
+  };
   readonly issues: readonly DiagnosticIssue[];
 }
 
@@ -55,6 +64,8 @@ export interface DiagnosticDependencies {
   readonly locateRoot?: (cwd: string, runner: ProcessRunner) => Promise<string | undefined>;
   readonly nodeVersion?: string;
   readonly piVersion?: string;
+  readonly parentModel?: { provider: string; id: string; supportsTools: boolean };
+  readonly agentReadiness?: (root: string, cwd: string, allowOverrides: boolean) => Promise<NonNullable<DiagnosticReport["agents"]>>;
 }
 
 const NODE_MINIMUM = [22, 19, 0] as const;
@@ -174,12 +185,26 @@ export async function diagnose(
   }
 
   if (snapshot?.dashboardDrift) issues.push(issue("DASHBOARD_DRIFT", "docs/cards/BOARD.md differs from canonical in-memory rendering", "docs/cards/BOARD.md", "warning"));
+  let agents: DiagnosticReport["agents"] | undefined;
+  if (snapshot?.config?.agents) {
+    try {
+      const readiness = dependencies.agentReadiness ?? (async (repositoryRoot: string, dispatchCwd: string, allowOverrides: boolean) => {
+        const result = await discoverAgents({ cwd: dispatchCwd, repositoryRoot, overridesEnabled: allowOverrides });
+        return { persisted_trust: result.persistedTrust, packaged_available: result.report.active.filter((entry) => entry.source === "package").map((entry) => entry.name), unavailable: result.report.unavailable.map((entry) => entry.name), active_overrides: result.report.active.filter((entry) => entry.source === "project").map(({ name, path, sha256 }) => ({ name, path, sha256 })), ignored_overrides: result.report.ignored.map(({ name, path, reason }) => ({ name, path, reason })), inherited_model: dependencies.parentModel ? { provider: dependencies.parentModel.provider, id: dependencies.parentModel.id, supports_tools: dependencies.parentModel.supportsTools } : null };
+      });
+      agents = await readiness(root, cwd, snapshot.config.agents.allow_project_overrides);
+      if (!agents.persisted_trust) issues.push(issue("PERSISTED_TRUST_REQUIRED", "Saved project trust is required for broad producers and project overrides", undefined, "warning"));
+      if (agents.unavailable.includes("requirements-producer") || agents.unavailable.includes("requirements-checker")) issues.push(issue("REQUIREMENTS_AGENTS_UNAVAILABLE", "Packaged requirements agents are unavailable"));
+      if (agents.inherited_model && !agents.inherited_model.supports_tools) issues.push(issue("MODEL_TOOLS_UNAVAILABLE", "The inherited model does not support custom tools"));
+    } catch (error) { issues.push(issue("AGENT_READINESS_FAILED", error instanceof Error ? error.message.slice(0, 500) : "Agent readiness failed")); }
+  }
   const boardValid = snapshot !== undefined;
   return {
     version: 1,
     ok: compatiblePi && compatibleNode && boardValid && issues.every((entry) => entry.severity !== "error"),
     runtime: { pi: { version: piVersion, compatible: compatiblePi }, node: { version: nodeVersion, compatible: compatibleNode } },
     executables: { git, gh },
+    agents,
     repository: {
       found: true,
       board_valid: boardValid,
