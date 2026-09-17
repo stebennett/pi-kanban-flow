@@ -1,92 +1,62 @@
 # Stage 2 prerequisite spike checkpoint
 
-**Status:** Partial — production Stage 2 work remains blocked.
+**Status:** Ready to begin Stage 2 implementation. This checkpoint closes only
+feasibility spikes; production modules must retain their separately specified
+unit, integration, and release gates.
 
-## Verified locally
+## Evidence
 
-- A real Pi 0.85.1 prose-only JSON-mode run exited `0` and emitted
-  `agent_end` without any tool result or `toolUse` stop reason. This confirms
-  that process success and final events alone are insufficient: the parent
-  runner must reject prose-only completion.
-- With a saved-trusted project extension that writes a load canary at module
-  evaluation, all four resource-disable flags prevent that extension from
-  loading while one explicit package extension still loads. This proves the
-  required strict resource boundary for project extensions; global-resource
-  canaries remain part of the installed-package/platform matrix.
-- A real Pi run can terminate through a sibling result tool when that tool is
-  allowlisted. The final `turn_end.toolResults[].toolName` exposes that exact
-  name, so the parent must enforce the expected role tool independently of
-  process success and `toolUse` stop reason.
-- A real Pi 0.85.1 JSON-mode run with OpenAI Codex invoked one explicitly
-  loaded terminating tool. It exited `0`, emitted the session header,
-  `turn_end`, and `agent_end`, reported `stopReason: toolUse`, and exposed
-  provider/model/usage in the authoritative final turn. The command used all
-  four resource-disable flags, `--no-builtin-tools`, one explicit extension,
-  and a one-tool allowlist. The sanitized integration test is opt-in through
-  `PI_RUN_REAL_STAGE_2_SPIKE=1` because it consumes authenticated provider
-  usage.
-- With `--no-skills --skill <path>` and no built-in read tool, Pi 0.85.1 does
-  not inject the approved skill body. The revised policy therefore parent-reads
-  the validated skill and supplies its normalized, bounded content through the
-  mode-`0600` `--append-system-prompt` file. A real Pi spike proves that this
-  prompt content reaches the child while `AGENTS.md` remains excluded.
-- Real noninteractive Pi runs prove both `--approve` and
-  `defaultProjectTrust: "always"` load project resources without creating a
-  saved decision. The runner must therefore inspect the persisted
-  `ProjectTrustStore` entry and require `decision === true`; runtime trust is
-  insufficient. The test restores settings and removes its temporary entry.
-- A noninteractive real Pi child started without `--approve` loaded a temporary
-  project extension only after the test wrote a saved `yes` decision through
-  `ProjectTrustStore`; the test removes that temporary saved decision on exit.
-  This proves the compatible persisted-trust adapter and child reuse boundary.
-- An adversarial archive-entry validation prototype rejects absolute and
-  traversal names, duplicate paths, special files, hardlinks, and symlink
-  escapes before extraction while permitting an in-root relative symlink. The
-  production extractor must apply these checks to parsed tar metadata.
-- A disposable real Git repository proves direct-argv `git archive --format=tar`},{
-  from an explicit commit produces an exact immutable snapshot: a later mutable
-  checkout change is absent from the archive. The future materializer must
-  parse and validate entries before extraction; this does not authorize
-  trusting `tar` extraction for adversarial archives.
-- An attestation prototype proves longest-root-first replacement is required
-  where temporary roots overlap, and that path/secret redaction must traverse
-  every durable string field rather than argv alone. Credential-bearing URLs
-  are redacted independently of configured secret names. This is feasibility
-  evidence only; the production attestation module remains gated.
-- A broad-path-policy prototype binds a normalized planned path to its exact
-  create/modify/delete action and rejects `.git`, board, design, traversal,
-  and unplanned accesses. Realpath/symlink-swap and nested-worktree checks
-  remain required before a production broad tool can be authorized.
-- A command-limits prototype proves direct child execution can enforce a hard
-  timeout and output-byte cap. An allowed command can still mutate an
-  unplanned file, proving the parent must inspect the exact resulting diff and
-  reject side effects rather than trusting exit status.
-- A named-command prototype proves the parent can select only a configured
-  command name and execute its configured executable/argv directly. A
-  shell-metacharacter canary remains a single literal argument and cannot
-  create its marker file. Production command timeout, abort, exact-diff, and
-  policy enforcement remain gated.
-- Pi 0.85.1 exposes `ProjectTrustStore.getEntry()` through
-  `@earendil-works/pi-coding-agent`. The integration spike proves canonical
-  ancestor lookup and distinguishes persisted `true`, `false`, and absent
-  decisions in an isolated agent directory.
-- On the current macOS host, a detached process group receives `SIGTERM`, a
-  full five-second grace window, and then `SIGKILL` when the parent and
-  descendant deliberately ignore TERM. The descendant is no longer signalable
-  after group cleanup. The test intentionally uses no board repository or
-  child Pi session.
+- **Persisted trust:** `ProjectTrustStore.getEntry()` provides canonical saved
+  yes/no/absent lookup. Real noninteractive Pi runs show that saved `yes`
+  loads project resources without `--approve`, while temporary `--approve` and
+  `defaultProjectTrust: "always"` do not create a saved decision. The runner
+  must require persisted `decision === true`.
+- **Resource policy and skills:** all four resource-disable flags plus
+  `--no-builtin-tools` block a saved-trusted project extension while an
+  explicit extension loads. Pi does not inject `--skill` content under this
+  policy; the parent must validate, normalize, bound, and inject approved
+  skill content through the mode-`0600` appended system-prompt file.
+- **JSON/result protocol:** real Pi JSON sessions expose authoritative
+  `turn_end`, `agent_end`, provider/model/usage, and `toolUse`. Prose-only and
+  sibling-tool completions prove that a successful exit is insufficient. The
+  result-stream matrix covers malformed, wrong-role, duplicate, post-result,
+  and oversized inputs.
+- **Snapshot/path feasibility:** direct-argv `git archive` of an exact commit
+  is immutable after checkout mutation. Archive metadata validation rejects
+  absolute/traversal/duplicate/special/hardlink/escaping-link entries, and a
+  realpath jail rejects symlink escapes. Production extraction and path tools
+  must apply these policies before exposure.
+- **Commands and attestation:** direct argv preserves shell metacharacters as
+  literal arguments; timeout, output-cap, abort, and out-of-policy diff
+  canaries are feasible. Attestation prototypes establish longest-root-first
+  normalization and recursive redaction of paths, secrets, and URL
+  credentials.
+- **Process lifecycle:** detached process groups support TERM, a full
+  five-second grace window, then KILL of TERM-ignoring descendants. The
+  macOS/Ubuntu × Node 22.19.0/24.x workflow matrix is green.
 
-## Command
+## Validation performed on the merged baseline
 
 ```text
-node --test --import tsx test/integration/stage-2-prerequisites.test.ts
+npm run typecheck
+npm test
+npm run package
+npm run package:check
+PI_RUN_REAL_STAGE_2_SPIKE=1 npm test
 ```
 
-## Still required before production runner work
+All normal tests (70) and all opt-in real-provider tests (70) passed locally.
+The platform workflow is green.
 
-This checkpoint does **not** close Work unit 0. The following mandatory proofs
-remain: duplicate, invalid,
-wrong-role payload, duplicate/post-result-conflict, malformed, and size-limit
-structured-result cases; adversarial archive extraction and strict/broad
-path-policy escape cases; command abort and production exact-diff policy; production attestation schema/secret/path checks;
-and the minimum/current macOS and Linux matrix for process cleanup.
+## Implementation constraints carried into Stage 2
+
+- Do not reintroduce child `--skill` discovery or built-in tools.
+- Require persisted saved trust, not runtime trust.
+- Reject non-tool, wrong-tool, malformed, duplicate, post-result, and bounded
+  stream failures before any success transition.
+- Validate archive metadata before extraction and enforce canonical path jails
+  on every access.
+- Execute configured commands with direct argv; enforce timeout/output/diff
+  limits and abort cleanup.
+- Normalize/redact every durable attestation string field.
+- Preserve TERM → five-second grace → KILL process-group cleanup.
