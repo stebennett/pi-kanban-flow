@@ -360,7 +360,7 @@ export const FindingSchema = Type.Object(
     location: SINGLE_LINE(500),
     summary: SINGLE_LINE(500),
     detail: SINGLE_LINE(4000),
-    suggested_fix: Type.Union([SINGLE_LINE(4000), Type.Literal("none")]),
+    suggested_fix: SINGLE_LINE(4000),
     evidence: Type.Array(EvidenceSchema, { maxItems: 128 }),
   },
   { additionalProperties: false },
