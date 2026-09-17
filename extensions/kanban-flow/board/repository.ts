@@ -3,7 +3,8 @@ import { lstat, readFile, readdir, realpath, rename, rm, writeFile } from "node:
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { Value } from "typebox/value";
-import { BoardSchema, CardSchema, ConfigSchema, type Board, type Config } from "./schemas.ts";
+import { ArtifactAttestationSchema, BoardSchema, CardSchema, ConfigSchema, type Board, type Config } from "./schemas.ts";
+import { CheckerResultSchema, ProbeResultSchema, ProducerResultSchema, ReviewerResultSchema, SplitDecisionResultSchema } from "./result-schemas.ts";
 import { renderBoard, type RenderCard } from "../engine/render.ts";
 import { parseRequirements } from "./requirements.ts";
 import { validateBoardSemantics } from "./semantic-validation.ts";
@@ -146,6 +147,26 @@ function parseCard(text: string, filename: string): CardRecord {
   return card;
 }
 
+function expectedArtifactPath(attestation: Record<string, any>): string {
+  const payload = attestation.payload; const card = payload.card_id; let kind: string;
+  if (attestation.tool === "submit_producer_result") kind = payload.phase === "requirements" ? "requirements-producer" : payload.phase === "design" ? "design-producer" : payload.phase === "implementation" ? "implementation-producer" : "ship-producer";
+  else if (attestation.tool === "submit_checker_result") kind = payload.phase === "requirements" ? "requirements-check" : payload.phase === "design" ? "design-check" : "ship-check";
+  else if (attestation.tool === "submit_reviewer_result") kind = `review-${payload.lens}`;
+  else if (attestation.tool === "submit_split_decision") kind = "split-decision";
+  else if (attestation.tool === "submit_probe_result" || attestation.tool === "parent_probe") kind = `probe-${String(payload.probe).replaceAll("_", "-")}`;
+  else throw new RepositoryFormatError(`unknown artifact tool ${String(attestation.tool)}`);
+  return `docs/cards/artifacts/${card === "none" ? "requirements" : card}/${kind}-${attestation.run_id}.yaml`;
+}
+
+function validateArtifact(text: string, relativePath: string): void {
+  const value = parseYaml<Record<string, any>>(text, relativePath);
+  if (!Value.Check(ArtifactAttestationSchema, value)) throw new RepositoryFormatError(`${relativePath} does not match the attestation schema`);
+  const schemas: Record<string, any> = { submit_producer_result: ProducerResultSchema, submit_checker_result: CheckerResultSchema, submit_reviewer_result: ReviewerResultSchema, submit_split_decision: SplitDecisionResultSchema, submit_probe_result: ProbeResultSchema, parent_probe: ProbeResultSchema };
+  if (!Value.Check(schemas[value.tool], value.payload)) throw new RepositoryFormatError(`${relativePath} has an invalid typed payload`);
+  if (value.run_id !== value.dispatch_id || value.run_id !== value.payload.dispatch_id) throw new RepositoryFormatError(`${relativePath} has mismatched run identity`);
+  if (expectedArtifactPath(value) !== relativePath) throw new RepositoryFormatError(`${relativePath} does not match its deterministic artifact path`);
+}
+
 async function validateOwnedTree(path: string, relativeRoot: string): Promise<void> {
   const entries = await readdir(path, { withFileTypes: true });
   for (const entry of entries) {
@@ -189,6 +210,12 @@ export async function readBoardRepository(inputRoot: string): Promise<BoardSnaps
       await validateOwnedTree(path, "docs/cards/artifacts");
       for (const child of await readdir(path, { withFileTypes: true })) {
         if (!/^CARD-[0-9]{4}$/.test(child.name) && child.name !== "requirements") throw new RepositoryFormatError(`invalid artifact directory ${child.name}`);
+        if (!child.isDirectory()) throw new RepositoryFormatError(`invalid artifact entry ${child.name}`);
+        for (const file of await readdir(join(path, child.name), { withFileTypes: true })) {
+          const relativePath = `docs/cards/artifacts/${child.name}/${file.name}`;
+          if (!file.isFile() || !file.name.endsWith(".yaml")) throw new RepositoryFormatError(`invalid artifact file ${relativePath}`);
+          validateArtifact(await textFile(join(path, child.name, file.name), relativePath), relativePath);
+        }
       }
     } else if (CARD_FILE.test(entry.name)) {
       cards.push(parseCard(await textFile(path, entry.name), entry.name));
