@@ -8,6 +8,11 @@
   `agent_end` without any tool result or `toolUse` stop reason. This confirms
   that process success and final events alone are insufficient: the parent
   runner must reject prose-only completion.
+- With a saved-trusted project extension that writes a load canary at module
+  evaluation, all four resource-disable flags prevent that extension from
+  loading while one explicit package extension still loads. This proves the
+  required strict resource boundary for project extensions; global-resource
+  canaries remain part of the installed-package/platform matrix.
 - A real Pi run can terminate through a sibling result tool when that tool is
   allowlisted. The final `turn_end.toolResults[].toolName` exposes that exact
   name, so the parent must enforce the expected role tool independently of
