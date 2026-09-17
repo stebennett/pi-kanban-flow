@@ -11,6 +11,9 @@ import { assembleTaskEnvelope } from "./prompts.ts";
 
 export interface DispatchPlan { dispatchId: string; agent: AgentDefinition; model: ResolvedModel; policy: RolePolicy; executable: string; argv: string[]; redactedArgv: string[]; cwd: string; promptPath: string; taskEnvelope: string; cleanup(): Promise<void> }
 export interface DispatchSuccess { runtime: RuntimeEvidence; exitCode: 0; stderr: string; startedAt: string; completedAt: string }
+export interface StrictDispatchTask { plan: DispatchPlan; expectation: RunExpectation }
+export interface ParallelDispatchOutcome { index: number; state: "completed" | "failed" | "skipped"; result?: DispatchSuccess; error?: string }
+export interface ParallelDispatchResult { outcomes: ParallelDispatchOutcome[]; usage: Record<string, number>; ok: boolean }
 const extensionFiles = { producer: "producer.ts", checker: "checker.ts", reviewer: "reviewer.ts", splitDecision: "split-decision.ts", probe: "probe.ts" } as const;
 
 export async function createDispatchPlan(options: { dispatchId: string; agent: AgentDefinition; model: ResolvedModel; policy: RolePolicy; cwd: string; systemPrompt: string; task: string; executable?: string }): Promise<DispatchPlan> {
@@ -41,4 +44,17 @@ export async function executeDispatch(plan: DispatchPlan, expectation: RunExpect
     return { runtime, exitCode: 0, stderr, startedAt, completedAt: new Date().toISOString() };
   } catch (error) { await terminateProcessGroup(child); throw error; }
   finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); await plan.cleanup(); }
+}
+
+export async function executeParallelStrict(tasks: readonly StrictDispatchTask[], maxParallel: number, parentSignal?: AbortSignal, executor: typeof executeDispatch = executeDispatch): Promise<ParallelDispatchResult> {
+  if (!Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 16) throw new Error("Strict parallelism must be between 1 and 16");
+  for (const task of tasks) if (task.plan.policy.name !== "strict" || task.plan.policy.resultRole === "producer") throw new Error("Only independent strict checker/reviewer dispatches may run in parallel");
+  const outcomes: ParallelDispatchOutcome[] = tasks.map((_, index) => ({ index, state: "skipped" })); const controller = new AbortController(); let next = 0; let terminalFailure = false;
+  const parentAbort = () => controller.abort(parentSignal?.reason); parentSignal?.addEventListener("abort", parentAbort, { once: true });
+  const worker = async () => { while (!terminalFailure && !controller.signal.aborted) { const index = next++; if (index >= tasks.length) return; try { const result = await executor(tasks[index].plan, tasks[index].expectation, controller.signal); outcomes[index] = { index, state: "completed", result }; } catch (error) { outcomes[index] = { index, state: "failed", error: error instanceof Error ? error.message : String(error) }; terminalFailure = true; controller.abort(error); } } };
+  await Promise.all(Array.from({ length: Math.min(maxParallel, tasks.length) }, () => worker()));
+  for (let index = next; index < tasks.length; index++) await tasks[index].plan.cleanup().catch((error) => { outcomes[index] = { index, state: "failed", error: `queued cleanup failed: ${String(error)}` }; });
+  parentSignal?.removeEventListener("abort", parentAbort);
+  const usage: Record<string, number> = {}; for (const outcome of outcomes) if (outcome.result) for (const [key, value] of Object.entries(outcome.result.runtime.usage)) if (typeof value === "number") usage[key] = (usage[key] ?? 0) + value;
+  return { outcomes, usage, ok: outcomes.every((outcome) => outcome.state === "completed") };
 }
