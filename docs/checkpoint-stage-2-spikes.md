@@ -53,6 +53,10 @@
   every durable string field rather than argv alone. Credential-bearing URLs
   are redacted independently of configured secret names. This is feasibility
   evidence only; the production attestation module remains gated.
+- A broad-path-policy prototype binds a normalized planned path to its exact
+  create/modify/delete action and rejects `.git`, board, design, traversal,
+  and unplanned accesses. Realpath/symlink-swap and nested-worktree checks
+  remain required before a production broad tool can be authorized.
 - A named-command prototype proves the parent can select only a configured
   command name and execute its configured executable/argv directly. A
   shell-metacharacter canary remains a single literal argument and cannot
