@@ -433,7 +433,7 @@ export const ArtifactAttestationSchema = Type.Object(
       Type.Null(),
     ]),
     model: Type.Union([
-      Type.Object({ provider: SINGLE_LINE(128), id: SINGLE_LINE(256), thinking: StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const) }, { additionalProperties: false }),
+      Type.Object({ provider: SINGLE_LINE(128), id: SINGLE_LINE(256), thinking: StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const) }, { additionalProperties: false }),
       Type.Null(),
     ]),
     policy: Type.Object({ name: SINGLE_LINE(128), tools: Type.Array(SINGLE_LINE(128), { maxItems: 64, uniqueItems: true }), snapshot_commit: Type.Union([OBJECT_ID, Type.Null()]) }, { additionalProperties: false }),
