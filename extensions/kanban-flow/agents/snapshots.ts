@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, posix } from "node:path";
 import { normalizeRepositoryPath } from "./path-policy.ts";
@@ -65,6 +65,8 @@ async function gitArchive(repository: string, commit: string): Promise<Buffer> {
   });
 }
 
+async function makeDirectoriesWritable(root: string): Promise<void> { await chmod(root, 0o700); for (const entry of await readdir(root, { withFileTypes: true })) if (entry.isDirectory()) await makeDirectoriesWritable(join(root, entry.name)); }
+
 export async function materializeSnapshot(repository: string, commit: string): Promise<Snapshot> {
   const entries = parseGitArchiveTar(await gitArchive(repository, commit));
   const root = await mkdtemp(join(tmpdir(), "kanban-snapshot-"));
@@ -74,6 +76,6 @@ export async function materializeSnapshot(repository: string, commit: string): P
     for (const entry of entries.filter((value) => value.type === "symlink")) { await mkdir(dirname(join(root, entry.path)), { recursive: true, mode: 0o755 }); await symlink(entry.link!, join(root, entry.path)); }
     const directories = [...new Set([root, ...entries.map((entry) => dirname(join(root, entry.path))), ...entries.filter((entry) => entry.type === "directory").map((entry) => join(root, entry.path))])].sort((a, b) => b.length - a.length);
     for (const directory of directories) await chmod(directory, 0o555);
-    return { root, commit, async cleanup() { await chmod(root, 0o700); await rm(root, { recursive: true, force: true }); } };
+    return { root, commit, async cleanup() { await makeDirectoriesWritable(root); await rm(root, { recursive: true, force: true }); } };
   } catch (error) { await rm(root, { recursive: true, force: true }); throw error; }
 }

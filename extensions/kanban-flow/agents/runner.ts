@@ -9,7 +9,7 @@ import type { ResolvedModel } from "./models.ts";
 import type { RolePolicy } from "./policy.ts";
 import { assembleTaskEnvelope } from "./prompts.ts";
 
-export interface DispatchPlan { dispatchId: string; agent: AgentDefinition; model: ResolvedModel; policy: RolePolicy; executable: string; argv: string[]; redactedArgv: string[]; cwd: string; promptPath: string; taskEnvelope: string; cleanup(): Promise<void> }
+export interface DispatchPlan { dispatchId: string; agent: AgentDefinition; model: ResolvedModel; policy: RolePolicy; executable: string; argv: string[]; redactedArgv: string[]; environment: NodeJS.ProcessEnv; cwd: string; promptPath: string; taskEnvelope: string; cleanup(): Promise<void> }
 export interface DispatchSuccess { runtime: RuntimeEvidence; exitCode: 0; stderr: string; startedAt: string; completedAt: string }
 export interface StrictDispatchTask { plan: DispatchPlan; expectation: RunExpectation }
 export interface ParallelDispatchOutcome { index: number; state: "completed" | "failed" | "skipped"; result?: DispatchSuccess; error?: string }
@@ -23,13 +23,14 @@ export async function createDispatchPlan(options: { dispatchId: string; agent: A
   const taskEnvelope = assembleTaskEnvelope(options.dispatchId, options.task);
   const argv = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-builtin-tools", "-e", extension, "--tools", options.policy.tools.join(","), "--model", `${options.model.provider}/${options.model.id}`, "--thinking", options.model.thinking, "--append-system-prompt", promptPath, "--", taskEnvelope];
   const redactedArgv = argv.map((value) => value === extension ? "<PACKAGE_ROOT>/extensions/kanban-flow/agents/role-extensions/<ROLE>.ts" : value === promptPath ? "<TEMP_ROOT>/system-prompt.md" : value);
-  return { ...options, executable: options.executable ?? "pi", argv, redactedArgv, promptPath, taskEnvelope, async cleanup() { await rm(directory, { recursive: true, force: true }); } };
+  const environment = { ...process.env, KANBAN_FLOW_TOOL_ROOT: options.cwd };
+  return { ...options, executable: options.executable ?? "pi", argv, redactedArgv, environment, promptPath, taskEnvelope, async cleanup() { await rm(directory, { recursive: true, force: true }); } };
 }
 
 export async function executeDispatch(plan: DispatchPlan, expectation: RunExpectation, signal?: AbortSignal): Promise<DispatchSuccess> {
   if (signal?.aborted) { await plan.cleanup(); throw new Error("Child dispatch aborted before spawn"); }
   const startedAt = new Date().toISOString(); const evaluator = new JsonRunEvaluator(expectation, plan.policy.limits.maxEvents); const decoder = new JsonLineDecoder(plan.policy.limits.lineBytes);
-  const child = spawnProcessGroup(plan.executable, plan.argv, plan.cwd); let stdoutBytes = 0; let stderrBytes = 0; let stderr = ""; let failure: Error | undefined; let timedOut = false;
+  const child = spawnProcessGroup(plan.executable, plan.argv, plan.cwd, plan.environment); let stdoutBytes = 0; let stderrBytes = 0; let stderr = ""; let failure: Error | undefined; let timedOut = false;
   const fail = (error: unknown) => { failure ??= error instanceof Error ? error : new Error(String(error)); void terminateProcessGroup(child); };
   child.stdout!.on("data", (chunk: Buffer) => { try { stdoutBytes += chunk.length; if (stdoutBytes > plan.policy.limits.stdoutBytes) throw new Error("Child stdout limit exceeded"); for (const line of decoder.push(chunk)) { if (!line) continue; evaluator.accept(JSON.parse(line)); } } catch (error) { fail(error); } });
   child.stderr!.on("data", (chunk: Buffer) => { stderrBytes += chunk.length; if (stderrBytes > plan.policy.limits.stderrBytes) fail(new Error("Child stderr limit exceeded")); else stderr += chunk.toString("utf8"); });

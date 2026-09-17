@@ -9,7 +9,7 @@ export async function terminateProcessGroup(child: ChildProcess, graceMs = 5_000
   if (!closed) await new Promise<void>((resolve) => child.once("close", () => resolve()));
 }
 
-export function spawnProcessGroup(executable: string, argv: readonly string[], cwd: string): ChildProcess {
+export function spawnProcessGroup(executable: string, argv: readonly string[], cwd: string, environment: NodeJS.ProcessEnv = process.env): ChildProcess {
   if (process.platform === "win32") throw new Error("Child process groups are supported only on macOS and Linux");
-  return spawn(executable, [...argv], { cwd, shell: false, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  return spawn(executable, [...argv], { cwd, shell: false, detached: true, stdio: ["ignore", "pipe", "pipe"], env: environment });
 }
