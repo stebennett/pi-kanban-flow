@@ -19,6 +19,6 @@ test("prose-only, duplicate, sibling, malformed identity, and unacceptable stops
 test("runner spawns directly and validates a complete fake child stream", async () => {
   const script = `const p=${JSON.stringify(events())};for(const e of p)process.stdout.write(JSON.stringify(e)+'\\n')`;
   const policy = { ...policyForAgent("requirements-checker"), limits: { ...policyForAgent("requirements-checker").limits, timeoutMs: 5_000 } };
-  const plan = { dispatchId: run, agent: { name: "requirements-checker", description: "x", body: "x", source: "package", path: "agents/x", sha256: "a".repeat(64) }, model: { provider: "openai", id: "gpt-5.4", thinking: "high", inherited: true }, policy, executable: process.execPath, argv: ["-e", script], redactedArgv: [], cwd: process.cwd(), promptPath: "none", taskEnvelope: "x", cleanup: async () => {} } as DispatchPlan;
+  const plan = { dispatchId: run, agent: { name: "requirements-checker", description: "x", body: "x", source: "package", path: "agents/x", sha256: "a".repeat(64) }, model: { provider: "openai", id: "gpt-5.4", thinking: "high", inherited: true }, policy, executable: process.execPath, argv: ["-e", script], redactedArgv: [], environment: process.env, cwd: process.cwd(), promptPath: "none", taskEnvelope: "x", cleanup: async () => {} } as DispatchPlan;
   const result = await executeDispatch(plan, expectation); assert.equal(result.exitCode, 0); assert.equal(result.runtime.eventCount, 5);
 });
