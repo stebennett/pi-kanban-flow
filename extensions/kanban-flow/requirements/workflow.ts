@@ -56,8 +56,8 @@ export interface RequirementsWorkflowDependencies {
   now?: () => Date;
 }
 export type RequirementsWorkflowStatus = "proposed" | "pending" | "reconciliation_proposed" | "revision_required" | "prepared_noninteractive" | "stale" | "blocked" | "cancelled" | "failed" | "failed_recovery_required";
-export interface RequirementsWorkflowOutcome { status: RequirementsWorkflowStatus; operationId: string; transactionId: string | null; baseCommit: string | null; statePrUrl: string | null; approvalDigest: string | null; affectedCards: readonly string[]; grandfatheredCards: readonly string[]; issue?: string; document?: string }
-function result(status: RequirementsWorkflowStatus, operationId: string, values: Partial<Omit<RequirementsWorkflowOutcome, "status" | "operationId">> = {}): RequirementsWorkflowOutcome { return { status, operationId, transactionId: null, baseCommit: null, statePrUrl: null, approvalDigest: null, affectedCards: [], grandfatheredCards: [], ...values }; }
+export interface RequirementsWorkflowOutcome { status: RequirementsWorkflowStatus; operationId: string; transactionId: string | null; baseCommit: string | null; statePrUrl: string | null; approvalDigest: string | null; affectedCards: readonly string[]; grandfatheredCards: readonly string[]; activeOverrides: readonly { name: string; path: string; sha256: string }[]; models: readonly { agent: string; provider: string; model: string; thinking: string }[]; issue?: string; document?: string }
+function result(status: RequirementsWorkflowStatus, operationId: string, values: Partial<Omit<RequirementsWorkflowOutcome, "status" | "operationId">> = {}): RequirementsWorkflowOutcome { return { status, operationId, transactionId: null, baseCommit: null, statePrUrl: null, approvalDigest: null, affectedCards: [], grandfatheredCards: [], activeOverrides: [], models: [], ...values }; }
 
 export class RequirementsWorkflow {
   private readonly now: () => Date;
@@ -85,7 +85,7 @@ export class RequirementsWorkflow {
         else {
           const context = { operationId, transactionId, baseCommit: ready.baseCommit, plannedAt }; const candidate = buildRequirementsCandidate({ authoritative: ready.snapshot, checked: dispatched, packageVersion: input.packageVersion, context });
           const bundle = prepareRequirementsApproval({ checked: dispatched, snapshot: ready.snapshot, baseCommit: ready.baseCommit, proposedPaths: Object.keys(candidate.files), normalization: this.dependencies.normalization });
-          const common = { transactionId, baseCommit: ready.baseCommit, approvalDigest: bundle.digest, affectedCards: dispatched.impact.affectedCardIds, grandfatheredCards: dispatched.impact.grandfatheredCardIds };
+          const common = { transactionId, baseCommit: ready.baseCommit, approvalDigest: bundle.digest, affectedCards: dispatched.impact.affectedCardIds, grandfatheredCards: dispatched.impact.grandfatheredCardIds, activeOverrides: dispatched.discovery.active.filter(({ source }) => source === "project" && Boolean(source)).map(({ name, path, sha256 }) => ({ name, path, sha256: sha256! })), models: [{ agent: "requirements-producer", provider: dispatched.models.producer.provider, model: dispatched.models.producer.id, thinking: dispatched.models.producer.thinking }, { agent: "requirements-checker", provider: dispatched.models.checker.provider, model: dispatched.models.checker.id, thinking: dispatched.models.checker.thinking }] };
           outcome = result("failed", operationId, common);
           if (!this.dependencies.interactive || !this.dependencies.approvalAdapter) outcome = result("prepared_noninteractive", operationId, { ...common, document: bundle.document });
           else {
@@ -105,7 +105,7 @@ export class RequirementsWorkflow {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error); const stale = error instanceof RequirementsDesignClosureError && error.stale || /approval is stale|origin\/main changed|Authoritative board changed/.test(message);
-      outcome = result(stale ? "stale" : externalActionsStarted ? "failed_recovery_required" : controller.signal.aborted && !ownershipError ? "cancelled" : "failed", operationId, { issue: ownershipError ? "lock_ownership_lost" : message, baseCommit: outcome.baseCommit, approvalDigest: outcome.approvalDigest, transactionId: outcome.transactionId, affectedCards: outcome.affectedCards, grandfatheredCards: outcome.grandfatheredCards });
+      outcome = result(stale ? "stale" : externalActionsStarted ? "failed_recovery_required" : controller.signal.aborted && !ownershipError ? "cancelled" : "failed", operationId, { issue: ownershipError ? "lock_ownership_lost" : message, baseCommit: outcome.baseCommit, approvalDigest: outcome.approvalDigest, transactionId: outcome.transactionId, affectedCards: outcome.affectedCards, grandfatheredCards: outcome.grandfatheredCards, activeOverrides: outcome.activeOverrides, models: outcome.models });
     } finally {
       if (timer) clearInterval(timer); parentSignal?.removeEventListener("abort", parentAbort);
       if (records) try { await records.finish({ version: 1, operation_id: operationId, status: outcome.status, transaction_id: outcome.transactionId ?? "none", base_commit: outcome.baseCommit ?? "none", approval_digest: outcome.approvalDigest ?? "none", affected_cards: outcome.affectedCards, grandfathered_cards: outcome.grandfatheredCards }); } catch (error) { outcome = result("failed", operationId, { issue: `operation_record_failed: ${error instanceof Error ? error.message : String(error)}` }); }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import extension from "../../extensions/kanban-flow/index.ts";
 
-test("extension registration is thin and exposes only the two diagnostic surfaces", () => {
+test("extension registration is thin and exposes deterministic workflow tools plus diagnostics", () => {
   const commands: string[] = [];
   const tools: string[] = [];
   const fakePi = {
@@ -11,5 +11,5 @@ test("extension registration is thin and exposes only the two diagnostic surface
   };
   extension(fakePi as never);
   assert.deepEqual(commands, ["kanban-validate"]);
-  assert.deepEqual(tools, ["kanban_validate"]);
+  assert.deepEqual(tools, ["kanban_initialize", "kanban_requirements", "kanban_validate"]);
 });
