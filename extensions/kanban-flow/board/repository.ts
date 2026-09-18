@@ -30,6 +30,8 @@ const NESTED_KEYS: Record<string, readonly string[]> = {
 const STATUSES = new Set(["backlog", "designing", "design_review", "ready_for_implementation", "implementing", "implementation_review", "ready_to_ship", "shipping", "done", "replaced"]);
 
 export interface CardRecord extends RenderCard {
+  readonly why?: string;
+  readonly notes?: string;
   acceptance_criteria: unknown[];
   replaces: string[];
   replaced_by: string[];
@@ -144,7 +146,12 @@ function parseCard(text: string, filename: string): CardRecord {
   if (why !== 1 || notes !== 1 || lines.indexOf("## Why") > lines.indexOf("## Notes")) {
     throw new RepositoryFormatError(`${filename} body must contain ## Why then ## Notes exactly once`);
   }
-  return card;
+  const whyIndex = lines.indexOf("## Why");
+  const notesIndex = lines.indexOf("## Notes");
+  return Object.assign(card, {
+    why: lines.slice(whyIndex + 1, notesIndex).join("\n").trim(),
+    notes: lines.slice(notesIndex + 1).join("\n").trim(),
+  });
 }
 
 function expectedArtifactPath(attestation: Record<string, any>): string {

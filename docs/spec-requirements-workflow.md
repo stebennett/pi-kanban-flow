@@ -234,7 +234,7 @@ A target may participate in only one semantic action. Supersession must be acycl
 
 - `create`: one card temporary key, target `none`, complete content, and only active existing/new requirement references.
 - `update`: no temporary key and one existing `backlog`, `designing`, or `design_review` target.
-- `replace`: no temporary key and one existing `backlog` target; at least one created card must reciprocally replace it in the final plan.
+- `replace`: no temporary key and one existing `backlog` target; the replace action itself proposes one newly allocated reciprocal replacement card using its complete content. Existing dependants are rewired by the impact planner.
 
 A card target appears once. Every requirement/dependency reference resolves exactly once against the authoritative snapshot or a sibling temporary key. Forward references are allowed. References to terminal or unknown cards are rejected except that existing terminal cards may remain immutable dependencies when otherwise legal. The complete resulting dependency graph must resolve and be acyclic.
 
