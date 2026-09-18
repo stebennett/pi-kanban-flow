@@ -75,6 +75,8 @@ Technical child-process failure before a valid result causes no success transiti
 
 The transaction must create or identify complete backlog coverage for every active replacement requirement. Follow-up cards that alter or depend on grandfathered behavior depend on the grandfathered card. The approval report names every grandfathered card and states that it will finish under superseded assumptions. If a design PR merged before the amendment is planned, reconciliation consumes the operation first; the requirements transaction is retried from the resulting authoritative status.
 
+A `design_review` amendment follows the marker-first closure and race rules in `spec-requirements-workflow.md`. A valid prior `requirements-design-close` marker plus a closed-unmerged PR is incomplete requirements work, not generic design rejection: after a fresh checked proposal and explicit approval, the requirements transaction returns the card to `designing` without spending design rework. A merged PR always gives reconciliation precedence.
+
 ## Global transition effects
 
 Every state mutation is built from one immutable authoritative snapshot and validated as a complete replacement snapshot before commit. A transition:

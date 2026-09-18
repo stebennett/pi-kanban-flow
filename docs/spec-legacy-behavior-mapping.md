@@ -79,7 +79,7 @@ Classification values:
 | `/adr` | design/implementation ADR persistence later | Deferred | ADR support is Stage 5 unless needed earlier. |
 | `/retro` | later metrics/retro feature | Deferred | Not first iteration. |
 | `/migrate` | `/skill:migrate` | Retained/Changed | One-way cutover only. |
-| `/kanban-init` | `/skill:kanban-init` | Retained/Changed | Pi package init and trust checks. |
+| `/kanban-init` | `/skill:kanban-init` | Retained/Changed | LLM-free Pi initialization creates only the empty control plane through its own state PR; exact behavior is in `spec-requirements-workflow.md`. |
 
 ## Recovery and safety behavior
 
@@ -122,7 +122,7 @@ The following tables classify the operational rules in the legacy pump, includin
 | Closed-unmerged implementation/slice PR recovery | Changed | Unsplit product PR closure blocks unless a specified retry transition applies. Sequential slice recovery is deferred with multi-PR shipping. |
 | Orphan branch/PR adoption after a crash | Retained/Changed | Discover by deterministic branch, trailers, and PR marker; validate exact diff and identity before reuse. Never infer success from existence. |
 | Normalize historical fields during every pump | Removed/Changed | Normal operation rejects unsupported schema. Explicit, one-way, fixture-backed migrations perform supported normalization through a migration PR. |
-| Drain `AMENDMENTS.md` into in-flight cards | Changed | Requirements changes are typed state transactions, not a free-form queue. Unapproved design work is revised; cards at or beyond merged design approval are explicitly grandfathered to finish under retained assumptions while follow-up backlog cards cover the replacement requirement. |
+| Drain `AMENDMENTS.md` into in-flight cards | Changed | Requirements changes are fresh checked, digest-approved typed state transactions, not a persisted free-form queue or hidden retry loop. Unapproved design work is revised; cards at or beyond merged design approval are explicitly grandfathered to finish under retained assumptions while follow-up backlog cards cover the replacement requirement. |
 | Preserve branch holding unshipped post-review slices | Deferred | Multi-PR split shipping and its original-branch preservation rules are deferred. |
 | Detect unshipped additions and deletions in both directions | Deferred/Retained principle | The exact split backstop is deferred; the retained principle is that merge/diff reconciliation must account for deletions and must not rely on rename inference or `HEAD`. |
 | Cleanup only after authoritative merge/close reconciliation | Retained | Cleanup validates expected marker, branch, and commit; cleanup failure is reported and never reverses authority. |

@@ -460,6 +460,12 @@ Validated child results are stored as deterministic YAML under `docs/cards/artif
 
 Every path is repository-relative in metadata, uses `/`, and must byte-for-byte equal the destination derived from payload role/phase/lens/probe and attested run ID. Symlinks are prohibited anywhere under `docs/cards/artifacts`. The file contains the child payload plus parent attestation defined in `spec-structured-results.md`; parent probes use its specified parent form. The parent receives JSON events but renders canonical human-readable YAML with stable key order, LF endings, and one final newline. Model-proposed paths never authorize writes; the engine chooses every destination.
 
+## Stage 3 initialization and requirements artifacts
+
+`spec-requirements-workflow.md` defines the schema-version-1 initialization defaults and rendering semantics. Initialization is a separate LLM-free state transaction that creates exactly `board.yaml`, `config.yaml`, and the canonical empty `BOARD.md`; it does not create `docs/spec.md` or cards.
+
+For durable child attestations, the parent adds required `finding_ids` immediately before `payload`. It is an ordered array parallel to `payload.findings`; the engine allocates each ID and roles with no findings store `[]`. Public child payloads still prohibit finding IDs. Repository validation requires the counter to exceed every ID in these mappings.
+
 ## Version policy
 
 Package releases use semver independently from board schema:

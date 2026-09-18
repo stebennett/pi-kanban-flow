@@ -72,6 +72,12 @@ Force unlock runs under the mutation mutex, displays validated metadata or corru
 
 The lock does not attest workflow success. After acquiring it, every pump reconciles remote state/PR operation markers because a prior owner may have died after an external action.
 
+## Stage 3 lock scope
+
+The `/skill:requirements` conversational interview occurs before the deterministic tool and owns no lock or mutation authority. The `requirements` tool acquires the lock before fetch/reconciliation and keeps the heartbeat active through child dispatch, approval UI, approved external actions, and state-PR creation. It performs an ownership-checking heartbeat immediately before each new external action. Lost ownership aborts children or ignores a pending UI result and forbids further actions, as specified in `spec-requirements-workflow.md`.
+
+Initialization derives canonical repository identity before lock acquisition because no board identity exists yet, then acquires the same lock with command `kanban-init` before authoritative classification or GitHub marker queries.
+
 ## Deferred remote lease
 
 A second clone/host is unsupported. Distributed operation requires a remote lease and a later specification.

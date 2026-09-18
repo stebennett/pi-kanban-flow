@@ -113,7 +113,7 @@ Recommended decisions, subject to the specification review:
 - Interactive approval is required for Stage 3 mutation. Print/JSON modes may prepare and return a proposal but must not approve or create a state PR unless a later specification defines an authenticated approval input.
 - Child artifacts from the accepted producer/checker runs are committed with the same state transaction. Rejected or cancelled attempts remain machine-local and do not become board authority.
 
-If the specification review chooses different semantics, update this plan in the same PR. Do not leave the plan and detailed specification inconsistent.
+The specification review selected these recommendations. `docs/spec-requirements-workflow.md` is authoritative and additionally fixes initialization defaults, temporary-reference normalization, stable AC matching, finding-ID attestation, seven-day local attempt retention, marker-first design-PR closure, built-in `ctx.ui.select` approval in TUI/RPC, and stable result objects. The prerequisite evidence is in `docs/checkpoint-stage-3-prerequisites.md`, and durable/crash coverage is mapped in `docs/stage-3-review-matrix.md`.
 
 ## 4. Binding Stage 3 boundaries
 
