@@ -454,6 +454,8 @@ Before production code, write short design documents for:
 
 ### Stage 3 — requirements workflow
 
+**Implementation checkpoint:** complete on the Stage 3 delivery stack; see `checkpoint-stage-3-complete.md`. It becomes authoritative after that stack merges to protected `main`.
+
 1. Add `/skill:kanban-init` and `/skill:requirements`.
 2. Support initial spec creation and later requirement changes.
 3. Port stable IDs, card decomposition, dependency validation, intake checking, and approval.
