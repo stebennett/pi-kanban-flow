@@ -109,7 +109,7 @@ export function materializeBacklogCards(snapshot: BoardSnapshot, proposal: Norma
     const baseHistory = current ? [...current.history as Card["history"]] : [];
     const card: Card = {
       id, title: change.title, status: "backlog", requirements, grandfathered_requirements: [], acceptance_criteria: criteria, dependencies,
-      replaces: change.action === "replace" ? [change.targetCard!] : [], replaced_by: [], replacement_reason: null, priority: change.priority,
+      replaces: change.action === "replace" ? [change.targetCard!] : [...(current?.replaces ?? [])], replaced_by: [...(current?.replaced_by ?? [])], replacement_reason: (current?.replacement_reason ?? null) as Card["replacement_reason"], priority: change.priority,
       created_at: current?.created_at ?? context.at, updated_at: context.at, started_at: null, delivered_at: null, blocked: null,
       workflow: emptyWorkflow(), rework: { design: 0, implementation: 0 }, history: [...baseHistory, {
         id: historyId, at: context.at, kind: current ? "requirements_scope_updated" : "card_created", from_status: current ? "backlog" : null,
