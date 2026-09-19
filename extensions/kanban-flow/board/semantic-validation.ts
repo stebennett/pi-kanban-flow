@@ -45,13 +45,17 @@ function detectDependencyCycles(cards: readonly CardRecord[]): void {
 }
 
 /** Validate cross-record invariants after strict shape validation. */
-export function validateBoardSemantics(input: { board: Board; config: Config; cards: readonly CardRecord[]; requirements?: readonly Requirement[] }): void {
+export function validateBoardSemantics(input: { board: Board; config: Config; cards: readonly CardRecord[]; requirements?: readonly Requirement[]; findingIds?: readonly string[] }): void {
   validateConfigSemantics(input.config);
   const byId = new Map<string, CardRecord>();
   let maxRequirement = 0;
   let maxCard = 0;
   let maxAcceptance = 0;
   let maxFinding = 0;
+  for (const findingId of input.findingIds ?? []) {
+    if (!isNumericId(findingId, "FINDING")) fail(`invalid finding ID ${findingId}`);
+    maxFinding = Math.max(maxFinding, Number(findingId.slice(-4)));
+  }
   for (const card of input.cards) {
     if (byId.has(card.id)) fail(`duplicate card ID ${card.id}`);
     byId.set(card.id, card);

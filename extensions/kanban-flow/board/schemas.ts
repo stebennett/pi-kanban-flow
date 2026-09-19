@@ -443,6 +443,7 @@ export const ArtifactAttestationSchema = Type.Object(
     completed_at: TIMESTAMP,
     exit_code: Type.Integer(),
     stop_reason: SINGLE_LINE(128),
+    finding_ids: Type.Array(FINDING_ID, { maxItems: 128, uniqueItems: true }),
     payload: Type.Record(Type.String(), Type.Unknown()),
   },
   { additionalProperties: false },

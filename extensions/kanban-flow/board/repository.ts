@@ -50,6 +50,7 @@ export interface BoardSnapshot {
   readonly board: Board;
   readonly config: Config;
   readonly cards: readonly CardRecord[];
+  readonly findingIds?: readonly string[];
   readonly requirements: string | undefined;
   readonly dashboard: string | undefined;
   readonly canonicalDashboard: string;
@@ -165,13 +166,15 @@ function expectedArtifactPath(attestation: Record<string, any>): string {
   return `docs/cards/artifacts/${card === "none" ? "requirements" : card}/${kind}-${attestation.run_id}.yaml`;
 }
 
-function validateArtifact(text: string, relativePath: string): void {
+function validateArtifact(text: string, relativePath: string): string[] {
   const value = parseYaml<Record<string, any>>(text, relativePath);
   if (!Value.Check(ArtifactAttestationSchema, value)) throw new RepositoryFormatError(`${relativePath} does not match the attestation schema`);
   const schemas: Record<string, any> = { submit_producer_result: ProducerResultSchema, submit_checker_result: CheckerResultSchema, submit_reviewer_result: ReviewerResultSchema, submit_split_decision: SplitDecisionResultSchema, submit_probe_result: ProbeResultSchema, parent_probe: ProbeResultSchema };
   if (!Value.Check(schemas[value.tool], value.payload)) throw new RepositoryFormatError(`${relativePath} has an invalid typed payload`);
+  if (value.finding_ids.length !== (Array.isArray(value.payload.findings) ? value.payload.findings.length : 0)) throw new RepositoryFormatError(`${relativePath} has mismatched finding IDs`);
   if (value.run_id !== value.dispatch_id || value.run_id !== value.payload.dispatch_id) throw new RepositoryFormatError(`${relativePath} has mismatched run identity`);
   if (expectedArtifactPath(value) !== relativePath) throw new RepositoryFormatError(`${relativePath} does not match its deterministic artifact path`);
+  return [...value.finding_ids];
 }
 
 async function validateOwnedTree(path: string, relativeRoot: string): Promise<void> {
@@ -204,6 +207,7 @@ export async function readBoardRepository(inputRoot: string): Promise<BoardSnaps
   if (!Value.Check(ConfigSchema, configValue)) throw new RepositoryFormatError("config.yaml does not match its strict schema");
   const entries = await readdir(cardsPath, { withFileTypes: true });
   const cards: CardRecord[] = [];
+  const findingIds: string[] = [];
   let dashboard: string | undefined;
   for (const entry of entries) {
     const path = join(cardsPath, entry.name);
@@ -221,7 +225,7 @@ export async function readBoardRepository(inputRoot: string): Promise<BoardSnaps
         for (const file of await readdir(join(path, child.name), { withFileTypes: true })) {
           const relativePath = `docs/cards/artifacts/${child.name}/${file.name}`;
           if (!file.isFile() || !file.name.endsWith(".yaml")) throw new RepositoryFormatError(`invalid artifact file ${relativePath}`);
-          validateArtifact(await textFile(join(path, child.name, file.name), relativePath), relativePath);
+          findingIds.push(...validateArtifact(await textFile(join(path, child.name, file.name), relativePath), relativePath));
         }
       }
     } else if (CARD_FILE.test(entry.name)) {
@@ -240,12 +244,15 @@ export async function readBoardRepository(inputRoot: string): Promise<BoardSnaps
   const requirementsPath = join(docs, "spec.md");
   const requirementsText = await lstat(requirementsPath).then(() => textFile(requirementsPath, "docs/spec.md")).catch(() => undefined);
   const requirements = requirementsText === undefined ? undefined : parseRequirements(requirementsText);
-  validateBoardSemantics({ board: boardValue as Board, config: configValue as Config, cards, requirements });
+  if (new Set(findingIds).size !== findingIds.length) throw new RepositoryFormatError("duplicate finding ID across artifacts");
+  findingIds.sort();
+  validateBoardSemantics({ board: boardValue as Board, config: configValue as Config, cards, requirements, findingIds });
   return Object.freeze({
     root,
     board: boardValue as Board,
     config: configValue as Config,
     cards: Object.freeze(cards),
+    findingIds: Object.freeze(findingIds),
     requirements: requirementsText,
     dashboard,
     canonicalDashboard,
