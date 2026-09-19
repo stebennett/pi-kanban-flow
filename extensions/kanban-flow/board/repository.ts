@@ -30,8 +30,8 @@ const NESTED_KEYS: Record<string, readonly string[]> = {
 const STATUSES = new Set(["backlog", "designing", "design_review", "ready_for_implementation", "implementing", "implementation_review", "ready_to_ship", "shipping", "done", "replaced"]);
 
 export interface CardRecord extends RenderCard {
-  readonly why?: string;
-  readonly notes?: string;
+  why?: string;
+  notes?: string;
   acceptance_criteria: unknown[];
   replaces: string[];
   replaced_by: string[];
