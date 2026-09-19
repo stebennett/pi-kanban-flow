@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { lstat, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { Value } from "typebox/value";
@@ -273,11 +273,15 @@ export async function writeAtomicExactFiles(rootInput: string, files: Readonly<R
       const target = resolve(root, path);
       const targetRelative = relative(root, target);
       if (!targetRelative || targetRelative.startsWith("..") || resolve(root, targetRelative) !== target) throw new RepositoryFormatError(`write path escapes repository root: ${path}`);
-      let parent = dirname(target);
-      while (parent !== root) {
-        const parentInfo = await lstat(parent).catch(() => undefined);
+      const parents: string[] = [];
+      for (let parent = dirname(target); parent !== root; parent = dirname(parent)) parents.push(parent);
+      for (const parent of parents.reverse()) {
+        let parentInfo = await lstat(parent).catch(() => undefined);
+        if (!parentInfo) {
+          await mkdir(parent, { mode: 0o755 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error; });
+          parentInfo = await lstat(parent).catch(() => undefined);
+        }
         if (!parentInfo || parentInfo.isSymbolicLink() || !parentInfo.isDirectory()) throw new RepositoryFormatError(`write parent is unsafe: ${path}`);
-        parent = dirname(parent);
       }
       const existing = await lstat(target).catch(() => undefined);
       if (existing && (existing.isSymbolicLink() || !existing.isFile() || existing.nlink !== 1)) throw new RepositoryFormatError(`write target is unsafe: ${path}`);

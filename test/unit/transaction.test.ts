@@ -55,8 +55,10 @@ test("proposes one exact state PR from the authoritative base", async () => {
   const git = new FakeGit();
   const github = new FakeGitHub();
   const coordinator = new StateTransactionCoordinator(repository(), git, github, () => new Date("2026-01-15T10:30:00.000Z"));
-  const result = await coordinator.propose({ root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", operationId: "KFOP-20260115T103000000Z-abcdefgh", mutation: mutation() });
+  const requestedTransaction = "KFTX-20260115T103000000Z-bcdefghj";
+  const result = await coordinator.propose({ root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", operationId: "KFOP-20260115T103000000Z-abcdefgh", transactionId: requestedTransaction, mutation: mutation() });
   assert.equal(result.kind, "proposed");
+  if (result.kind === "proposed") assert.equal(result.descriptor.id, requestedTransaction);
   assert.equal(github.creates, 1);
   assert.deepEqual(git.calls, ["fetch", "resolve", "resolve", "worktree", "stage", "commit", "resolve", "push", "resolve"]);
 });

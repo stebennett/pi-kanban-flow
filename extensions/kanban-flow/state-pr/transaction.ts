@@ -1,4 +1,4 @@
-import { isObjectId, runtimeId } from "../engine/ids.ts";
+import { isObjectId, isRuntimeId, runtimeId } from "../engine/ids.ts";
 import { sortedUniquePaths } from "../engine/paths.ts";
 import { readBoardRepository, writeAtomicExactFiles, type BoardSnapshot } from "../board/repository.ts";
 import type { GitAdapter } from "./git.ts";
@@ -95,6 +95,7 @@ export interface StateTransactionPlan {
   repositoryId: string;
   packageVersion: string;
   operationId?: string;
+  transactionId?: string;
   plannedAt?: string;
   mutation: StateMutation;
   title?: string;
@@ -200,7 +201,8 @@ export class StateTransactionCoordinator {
       throw new StateTransactionError(`closed-unmerged state PR #${candidate.pullRequest.number} requires explicit resolution`);
     }
 
-    const transactionId = runtimeId("KFTX", this.now());
+    const transactionId = plan.transactionId ?? runtimeId("KFTX", this.now());
+    if (!isRuntimeId(transactionId, "KFTX")) throw new StateTransactionError("transaction ID is invalid");
     const descriptorContext: StateMutationContext = { operationId, transactionId, baseCommit, plannedAt };
     const authoritative = await this.repository.read(plan.root);
     const result = await plan.mutation.apply(authoritative, descriptorContext);
