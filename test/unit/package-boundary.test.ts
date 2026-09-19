@@ -13,6 +13,9 @@ const files = JSON.parse(listing)[0].files.map((entry: { path: string }) => entr
 test("package boundary includes runtime entry points and excludes fixtures/tests", () => {
   assert.ok(files.includes("extensions/kanban-flow/index.ts"));
   assert.ok(files.includes("extensions/kanban-flow/paths.ts"));
+  assert.ok(files.includes("extensions/kanban-flow/requirements/workflow.ts"));
+  assert.ok(files.includes("skills/kanban-init/SKILL.md"));
+  assert.ok(files.includes("skills/requirements/SKILL.md"));
   assert.ok(!files.some((file: string) => file.startsWith("reference/")));
   assert.ok(!files.some((file: string) => file.startsWith("test/")));
 });
@@ -40,6 +43,7 @@ test("asset resolution works from checkout, symlink, pinned archive, and packed 
   const unpackedRoot = await realpath(join(packedDir, "package"));
   const unpackedModule = pathToFileURL(join(unpackedRoot, "extensions", "kanban-flow", "paths.ts")).href;
   assert.equal(await resolvePackageAsset("README.md", unpackedModule), join(unpackedRoot, "README.md"));
+  assert.equal(await resolvePackageAsset("skills/requirements/SKILL.md", unpackedModule), join(unpackedRoot, "skills/requirements/SKILL.md"));
   const packedFiles = execFileSync("tar", ["-tzf", join(packedDir, packed)], { encoding: "utf8" }).split("\\n");
   assert.ok(!packedFiles.some((file: string) => file.includes("reference/") || file.includes("test/")));
 });

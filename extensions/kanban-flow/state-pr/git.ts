@@ -113,7 +113,7 @@ export class GitAdapter {
         paths.push(path.includes(" -> ") ? path.slice(path.lastIndexOf(" -> ") + 4) : path);
       }
     }
-    return sortedUniquePaths(paths);
+    return sortedUniquePaths([...new Set(paths)]);
   }
   async isAncestor(ancestor: string, descendant: string, cwd = this.defaultCwd): Promise<boolean> {
     const result = await this.run(["merge-base", "--is-ancestor", arg(ancestor, "ancestor"), arg(descendant, "descendant")], { cwd });
