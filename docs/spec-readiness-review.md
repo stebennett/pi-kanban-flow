@@ -36,6 +36,10 @@
 - Checker criterion sets, review-lens scopes, and lock/mutex records are exact.
 - Shipping has no generic rework budget; failures route by implementation, deterministic-parent, transient, or ambiguous ownership.
 
+## Stage 3 closure
+
+`spec-requirements-workflow.md`, `stage-3-review-matrix.md`, and `checkpoint-stage-3-prerequisites.md` close the initialization and requirements-workflow questions left after Stage 2. The chosen approval primitive is built-in `ctx.ui.select`, with executable TUI and RPC evidence. Noninteractive modes prepare only and cannot approve. These Stage 3 documents refine this Stage 0 readiness summary without reopening its shared architecture.
+
 ## Required pre-production validation
 
 The role-result and trust/resource-policy spikes in `spec-development-process.md` remain implementation feasibility gates. A failed spike requires specification revision before workflow code continues.

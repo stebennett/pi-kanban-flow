@@ -39,6 +39,10 @@ If implementation discovers a required path outside the approved allowlist, it r
 
 A pump with no durable board change opens no state PR.
 
+Initialization uses the same state branch, trailers, marker, exact-diff, stale-base, crash, and human-merge rules. Because a missing board cannot satisfy the normal repository read, `spec-requirements-workflow.md` requires a separate typed initialization coordinator seam; normal transactions remain strict and never accept a partial board.
+
+Requirements approval occurs before any managed branch, commit, push, PR/comment, or design-PR close action. Secure lock/snapshot/prompt/operation files are machine-local resources, not proposed state. The exact post-approval design-close ordering and recovery contract is defined in `spec-requirements-workflow.md`.
+
 ## Machine markers
 
 Every managed PR body contains an HTML-comment JSON marker so it remains machine-readable without presenting model-return syntax:

@@ -372,6 +372,8 @@ Rewrite prompts for Pi rather than mechanically renaming Claude concepts.
 
 ### 4.10 Requirements workflow
 
+The authoritative Stage 3 operational contract is `spec-requirements-workflow.md`; its exact initialization, approval, retention, ID-preview, rendering, reconciliation, and report semantics refine this section.
+
 Consolidate useful behavior from `refine`, `requirement`, `req-ids`, and intake checking into `/skill:requirements`.
 
 It should support:
