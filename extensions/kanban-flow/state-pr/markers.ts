@@ -177,8 +177,11 @@ export function assertMarkerMatchesBranch(marker: PullRequestMarker, head: strin
   const card = marker.card_ids.length === 1 ? marker.card_ids[0] : undefined;
   if (marker.kind === "state") {
     if (head !== `kanban/state/${marker.transaction_id}`) throw new Error("state marker branch mismatch");
-  } else if (!card || !new RegExp(`^kanban/${marker.kind}/${card}-[a-z0-9]+(?:-[a-z0-9]+)*$`).test(head)) {
-    throw new Error(`${marker.kind} marker branch mismatch`);
+  } else {
+    const prefix = marker.kind === "design" ? "kanban/design" : "kanban/card";
+    if (!card || !new RegExp(`^${prefix}/${card}-[a-z0-9]+(?:-[a-z0-9]+)*$`).test(head)) {
+      throw new Error(`${marker.kind} marker branch mismatch`);
+    }
   }
 }
 

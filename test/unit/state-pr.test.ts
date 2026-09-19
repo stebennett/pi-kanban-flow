@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { RecordingProcessRunner, type ProcessResult } from "../../extensions/kanban-flow/state-pr/process.ts";
 import { GitAdapter, parseWorktreeList } from "../../extensions/kanban-flow/state-pr/git.ts";
 import { discoverManagedPullRequests, findUniqueManagedPullRequest, type GitHubAdapter, type GitHubPullRequest } from "../../extensions/kanban-flow/state-pr/github.ts";
-import { parseActionMarker, parseCommitTrailers, parsePullRequestMarker, parseResolutionMarker, serializeActionMarker, serializeCommitTrailers, serializePullRequestMarker, serializeResolutionMarker, type PullRequestMarker } from "../../extensions/kanban-flow/state-pr/markers.ts";
+import { assertMarkerMatchesBranch, parseActionMarker, parseCommitTrailers, parsePullRequestMarker, parseResolutionMarker, serializeActionMarker, serializeCommitTrailers, serializePullRequestMarker, serializeResolutionMarker, type PullRequestMarker } from "../../extensions/kanban-flow/state-pr/markers.ts";
 
 const op = "KFOP-20260115T103000000Z-abcdefgh";
 const tx = "KFTX-20260115T103000000Z-abcdefgh";
@@ -27,6 +27,15 @@ test("marker and trailer validation fails closed", () => {
   assert.deepEqual(parseCommitTrailers(trailers), { kind: "state", operation_id: op, card_ids: [card], transaction_id: tx });
   assert.throws(() => parseCommitTrailers(`${trailers}\nKanban-Flow-Operation: ${op}`), /missing or duplicate/);
   assert.throws(() => parseCommitTrailers(`Kanban-Flow-Kind: product\nKanban-Flow-Operation: ${op}\nKanban-Flow-Transaction: ${tx}\nKanban-Flow-Card: ${card}`), /cannot have transaction/);
+});
+
+test("design and product markers accept only their managed branch classes", () => {
+  const design: PullRequestMarker = { version: 1, kind: "design", operation_id: op, card_ids: [card], base: "main" };
+  const product: PullRequestMarker = { version: 1, kind: "product", operation_id: op, card_ids: [card], base: "main" };
+  assert.doesNotThrow(() => assertMarkerMatchesBranch(design, "kanban/design/CARD-0001-example"));
+  assert.doesNotThrow(() => assertMarkerMatchesBranch(product, "kanban/card/CARD-0001-example"));
+  assert.throws(() => assertMarkerMatchesBranch(product, "kanban/product/CARD-0001-example"), /product marker branch mismatch/);
+  assert.throws(() => assertMarkerMatchesBranch(product, "kanban/card/CARD-0001"), /product marker branch mismatch/);
 });
 
 test("Git adapter passes executable and argv separately", async () => {
