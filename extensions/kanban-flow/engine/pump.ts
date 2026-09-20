@@ -83,6 +83,7 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
   let baseCommit = "none";
   let selected: ScheduledCard | undefined;
   let externalActionsStarted = false;
+  let finalReport: PumpReport | undefined;
   const acquire = dependencies.acquireLock ?? ((input) => acquireLock({ ...input, ttlSeconds: dependencies.ttlSeconds ?? 1800 }));
   const heartbeat = async () => {
     if (controller.signal.aborted) throw new Error("pump cancelled");
@@ -129,12 +130,21 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
     return buildPumpReport(transactionReport(reportFromPhase({ ...report, base_commit: baseCommit }, phase, selected), outcome));
   } catch (error) {
     const external = error instanceof LockContentionError ? false : externalActionsStarted;
-    const result = { ...report, base_commit: baseCommit, status: signal?.aborted ? "cancelled" : external ? "failed_recovery_required" : "failed", issues: [issue({ code: error instanceof LockContentionError ? "lock_contention" : "pump_failed", message: error instanceof Error ? error.message : String(error) })], next_human_action: error instanceof LockContentionError ? "Wait for the other pump to finish." : "Inspect the failure and retry after reconciliation." } as PumpReport;
-    return buildPumpReport(result);
+    const ownershipLost = error instanceof LockOwnershipLostError;
+    const result = { ...report, base_commit: baseCommit, status: signal?.aborted ? "cancelled" : external || ownershipLost ? "failed_recovery_required" : "failed", issues: [issue({ code: error instanceof LockContentionError ? "lock_contention" : ownershipLost ? "lock_ownership_lost" : "pump_failed", message: error instanceof Error ? error.message : String(error), evidence: ownershipLost ? ["lock heartbeat/release evidence is unavailable"] : undefined })], next_human_action: error instanceof LockContentionError ? "Wait for the other pump to finish." : ownershipLost ? "Reconcile remote authority and inspect the lock before retrying." : "Inspect the failure and retry after reconciliation." } as PumpReport;
+    finalReport = buildPumpReport(result);
+    return finalReport;
   } finally {
     if (timer) clearInterval(timer);
     signal?.removeEventListener("abort", abort);
-    if (lock) { try { await lock.release(); } catch { /* report cannot be replaced after return; release is best effort */ } }
+    if (lock) {
+      try { await lock.release(); }
+      catch (error) {
+        const releaseIssue = issue({ code: "lock_release_failed", message: error instanceof Error ? error.message : String(error), evidence: ["lock release was not confirmed"] });
+        const base = finalReport ?? report;
+        finalReport = buildPumpReport({ ...base, status: "failed_recovery_required", issues: [...base.issues, releaseIssue], next_human_action: "Inspect lock ownership and reconcile external authority before retrying." });
+      }
+    }
   }
 }
 

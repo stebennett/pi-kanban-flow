@@ -1,6 +1,6 @@
 # Stage 4 completion checkpoint
 
-**Status:** Stage 4 one-card lifecycle implementation complete; ready for Stage 5 hardening
+**Status:** Stage 4 deterministic lifecycle and recovery audit fixes implemented; ready for Stage 5 hardening
 **Branch:** `stage-4/unit-13-completion`
 **Base:** `stage-4/unit-12-acceptance` (`5238eb0abcde3fb5bc8a0b09114b9d5d598c0a17`)
 
@@ -38,7 +38,7 @@ Phase skills are diagnostic requests only. `/skill:design`, `/skill:implement`, 
 
 ## Evidence and validation
 
-The automated acceptance suite covers the real-Git one-card lifecycle, one bounded implementation rework, split validation and dependency rewiring, worktree/path enforcement, direct command probes, immutable review fanout, product PR recovery, state reconciliation, lock loss, and Pi/package surfaces. The Stage 4 review matrix (`docs/stage-4-review-matrix.md`) indexes durable effects and crash windows.
+The automated acceptance suite covers deterministic lifecycle effects plus real-Git/state-transaction seams, one bounded implementation rework, split validation and dependency rewiring, worktree/path enforcement, direct command probes, immutable review fanout, product PR recovery, state reconciliation, lock-loss classification, release-failure reporting, blocker-resolution authority gates, and Pi/package surfaces. The Stage 4 review matrix (`docs/stage-4-review-matrix.md`) indexes durable effects and crash windows. The shipped pump assembles fresh GitHub/state-transaction reconciliation and common-lock dependencies; model-dependent child dispatch remains explicitly host-context dependent.
 
 Validation run on this completion branch:
 
@@ -54,7 +54,7 @@ The package boundary includes every Stage 4 runtime module, agent, doctrine, and
 
 ## Deferred and known gaps
 
-The following are deliberately deferred: unattended looping; ADR files/indexes; post-review multi-PR split shipping; partial review-lens reruns; Claude-board migration; automatic handling of human review comments, approvals, or dismissals; retro/testing-level features; Windows; and automatic merge. Live paid-provider runs, live GitHub mutation, Linux/minimum-version matrices, and the opt-in sibling terminating-tool Pi spike remain environment-dependent evidence gaps; the engine fails closed when they cannot be proved.
+The following are deliberately deferred: unattended looping; ADR files/indexes; post-review multi-PR split shipping; partial review-lens reruns; Claude-board migration; automatic handling of human review comments, approvals, or dismissals; retro/testing-level features; Windows; and automatic merge. Live paid-provider runs, live GitHub mutation against a provider repository, Linux/minimum-version matrices, and the opt-in sibling terminating-tool Pi spike remain environment-dependent evidence gaps. The default Pi tool cannot prove child-model authentication or spawn lifecycle producers without an active parent model context; it reports this as a blocked deterministic dispatch rather than claiming success. The engine fails closed when any unavailable provider/platform evidence cannot be proved.
 
 ## Stage 5 handoff
 

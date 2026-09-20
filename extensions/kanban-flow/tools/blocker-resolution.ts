@@ -6,7 +6,8 @@ import { planLifecycleTransition } from "../lifecycle/effects.ts";
 import { renderCardDocument } from "../requirements/render.ts";
 import { runtimeId } from "../engine/ids.ts";
 import { GitAdapter } from "../state-pr/git.ts";
-import { GhCliAdapter } from "../state-pr/github.ts";
+import { GhCliAdapter, discoverManagedPullRequests } from "../state-pr/github.ts";
+import { acquireLock, type LockHandle } from "../board/lock.ts";
 import { createStateTransactionGit, createStateTransactionRepository, StateTransactionCoordinator, type StateMutation } from "../state-pr/transaction.ts";
 import { deriveGitHubRepositoryIdentity } from "../requirements/initialize.ts";
 import { packageRoot } from "../paths.ts";
@@ -25,11 +26,27 @@ export async function runBlockerResolution(input: { cwd: string; packageVersion:
   const operationId = runtimeId("KFOP");
   if (input.params.decision === "cancel") return { version: 1, workflow: "blocker_resolution", status: "cancelled", operation_id: operationId, state_pr_url: "none", card_id: input.params.card_id, next_action: "The blocker remains unchanged.", issues: [] };
   if (!input.params.reason) return { version: 1, workflow: "blocker_resolution", status: "failed", operation_id: operationId, state_pr_url: "none", card_id: input.params.card_id, next_action: "Provide a bounded reason and retry.", issues: [{ code: "reason_required", message: "A human reason is required for blocker resolution." }] };
+  let lock: LockHandle | undefined;
   try {
     const git = new GitAdapter({ cwd: input.cwd }); const root = await git.repositoryRoot(input.cwd); const identity = await deriveGitHubRepositoryIdentity(root, { git });
+    lock = await acquireLock({ cwd: root, repositoryId: identity.repositoryId, operationId, command: "blocker-resolution", ttlSeconds: 1800 });
+    await lock.heartbeat();
+    // Authority is always fresh main. Pending or unresolved state PRs stop this
+    // operation before the card is even read; proposed/local board content is not
+    // evidence for a blocker resolution.
+    await git.fetch("origin", root);
+    const baseCommit = await git.resolveRef("origin/main", root);
+    if (!baseCommit) throw new Error("fresh origin/main is unavailable");
+    const github = new GhCliAdapter({ cwd: root, repository: identity.repositoryId });
+    const statePrs = await discoverManagedPullRequests(github, { kind: "state" });
+    if (statePrs.length > 1) throw new Error("multiple managed state PRs are ambiguous");
+    const statePr = statePrs[0]?.pullRequest;
+    if (statePr?.state === "open") throw new Error(`state PR #${statePr.number} is pending; reconcile it before resolving a blocker`);
+    if (statePr?.state === "closed") throw new Error(`closed-unmerged state PR #${statePr.number} requires explicit recovery`);
+    if (statePr?.state === "merged" && (!statePr.merge_commit || !(await git.isAncestor(statePr.merge_commit, baseCommit, root)))) throw new Error("merged state PR is not reachable from fresh origin/main");
+    await lock.heartbeat();
     const initial = await readBoardRepository(root); const card = initial.cards.find((candidate) => candidate.id === input.params.card_id); if (!card) throw new Error("Card was not found in the authoritative board");
     if (!card.blocked) throw new Error("Card is not blocked");
-    const github = new GhCliAdapter({ cwd: root, repository: identity.repositoryId });
     const mutation: StateMutation = { cardIds: [card.id], apply(authoritative, context) {
       const current = (authoritative as any).cards.find((candidate: any) => candidate.id === card.id); if (!current) throw new Error("Card disappeared from authoritative board");
       const transition = planLifecycleTransition(authoritative as any, { cardId: card.id, designLimit: 10, implementationLimit: 1, metadata: { at: context.plannedAt, operationId: context.operationId, transactionId: context.transactionId, historyId: runtimeId("KFH"), summary: `Resolve blocker: ${input.params.reason}` }, event: {
@@ -43,11 +60,13 @@ export async function runBlockerResolution(input: { cwd: string; packageVersion:
       return { snapshot: next, files };
     } };
     const coordinator = new StateTransactionCoordinator(createStateTransactionRepository(), createStateTransactionGit(git), github);
+    await lock.heartbeat();
     const outcome = await coordinator.propose({ root, repositoryId: identity.repositoryId, packageVersion: input.packageVersion, operationId, mutation });
     if (outcome.kind === "pending") return { version: 1, workflow: "blocker_resolution", status: "proposed", operation_id: operationId, state_pr_url: outcome.pullRequest.url, card_id: card.id, next_action: "Review and merge the state PR; resolution is not authoritative until merge.", issues: [] };
     if (outcome.kind !== "proposed" && outcome.kind !== "reused") throw new Error("State authority changed; reconcile before retrying");
     return { version: 1, workflow: "blocker_resolution", status: "proposed", operation_id: operationId, state_pr_url: outcome.pullRequest.url, card_id: card.id, next_action: "Review and merge the state PR, then run another pump.", issues: [] };
   } catch (error) { return { version: 1, workflow: "blocker_resolution", status: "failed", operation_id: operationId, state_pr_url: "none", card_id: input.params.card_id, next_action: "Resolve the reported failure and retry after reconciliation.", issues: [{ code: "blocker_resolution_failed", message: (error instanceof Error ? error.message : String(error)).slice(0, 2000) }] }; }
+  finally { if (lock) await lock.release().catch(() => undefined); }
 }
 
 export async function packageVersionForBlocker(): Promise<string> { const { readFile } = await import("node:fs/promises"); const manifest = JSON.parse(await readFile(`${await packageRoot()}/package.json`, "utf8")) as { version?: string }; return manifest.version ?? "0.0.0"; }
