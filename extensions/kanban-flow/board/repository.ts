@@ -8,6 +8,7 @@ import { CheckerResultSchema, ProbeResultSchema, ProducerResultSchema, ReviewerR
 import { renderBoard, type RenderCard } from "../engine/render.ts";
 import { parseRequirements } from "./requirements.ts";
 import { validateBoardSemantics } from "./semantic-validation.ts";
+import { validateRenderedLifecycleArtifact } from "../lifecycle/artifacts.ts";
 
 const CARD_FILE = /^CARD-[0-9]{4}\.md$/;
 const CARD_KEYS = [
@@ -174,6 +175,9 @@ function validateArtifact(text: string, relativePath: string): string[] {
   if (value.finding_ids.length !== (Array.isArray(value.payload.findings) ? value.payload.findings.length : 0)) throw new RepositoryFormatError(`${relativePath} has mismatched finding IDs`);
   if (value.run_id !== value.dispatch_id || value.run_id !== value.payload.dispatch_id) throw new RepositoryFormatError(`${relativePath} has mismatched run identity`);
   if (expectedArtifactPath(value) !== relativePath) throw new RepositoryFormatError(`${relativePath} does not match its deterministic artifact path`);
+  if (value.payload.card_id !== "none") {
+    try { validateRenderedLifecycleArtifact(text, relativePath); } catch (error) { throw new RepositoryFormatError(`${relativePath} is not a valid Stage 4 artifact: ${error instanceof Error ? error.message : String(error)}`); }
+  }
   return [...value.finding_ids];
 }
 

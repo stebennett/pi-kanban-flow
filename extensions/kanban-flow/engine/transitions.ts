@@ -135,12 +135,16 @@ export interface ProductEvidence {
   readonly verificationResultPaths: readonly string[];
 }
 
+export interface DesignAttemptEvidence {
+  readonly producerResultPath: string;
+  readonly checkerResultPath: string;
+}
 export type TransitionEvent =
   | { readonly kind: "design_passed"; readonly evidence: DesignEvidence }
-  | { readonly kind: "design_changes_requested"; readonly evidence?: readonly string[] }
-  | { readonly kind: "design_blocked"; readonly reason: string; readonly evidence?: readonly string[] }
+  | { readonly kind: "design_changes_requested"; readonly evidence?: readonly string[] | DesignAttemptEvidence }
+  | { readonly kind: "design_blocked"; readonly reason: string; readonly evidence?: readonly string[] | DesignAttemptEvidence }
   | { readonly kind: "design_merged"; readonly evidence: DesignMergeEvidence }
-  | { readonly kind: "design_closed"; readonly evidence?: readonly string[] }
+  | { readonly kind: "design_closed"; readonly evidence?: readonly string[] | DesignAttemptEvidence }
   | { readonly kind: "split_decided"; readonly evidence: SplitEvidence }
   | { readonly kind: "split_needs_human"; readonly resultPath?: string; readonly decidedAt?: string; readonly reason: string; readonly evidence?: readonly string[] }
   | { readonly kind: "implementation_completed"; readonly evidence: ImplementationEvidence }
@@ -154,7 +158,7 @@ export type TransitionEvent =
   | { readonly kind: "shipping_blocked"; readonly reason: string; readonly evidence?: readonly string[] }
   | { readonly kind: "product_merged"; readonly pr: PRRecord; readonly mergeCommit: string; readonly deliveredAt: string }
   | { readonly kind: "recovery_product_merged"; readonly pr: PRRecord; readonly mergeCommit: string; readonly deliveredAt: string; readonly evidence?: readonly string[] }
-  | { readonly kind: "blocker_resolved"; readonly resumeStatus: DurableStatus; readonly proceedUnsplit?: { readonly reason: string; readonly decidedAt: string } }
+  | { readonly kind: "blocker_resolved"; readonly resumeStatus: DurableStatus; readonly proceedUnsplit?: { readonly reason: string; readonly decidedAt: string; readonly splitResultPath?: string } }
   | { readonly kind: "deterministic_correction"; readonly status?: DurableStatus };
 
 export interface TransitionRequest {
@@ -269,6 +273,10 @@ function requireNonNegativeLimit(limit: number, phase: ReworkPhase): void {
 function appendPaths(existing: readonly string[], additions: readonly string[]): string[] {
   return [...existing, ...additions.filter((path) => !existing.includes(path))];
 }
+function designEvidencePaths(evidence: readonly string[] | DesignAttemptEvidence | undefined): readonly string[] {
+  if (!evidence) return [];
+  return Array.isArray(evidence) ? evidence : ("producerResultPath" in evidence ? [evidence.producerResultPath, evidence.checkerResultPath] : []);
+}
 
 const BRANCH_SLUG = /^(?:[a-z0-9]|[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,46}[a-z0-9])$/;
 
@@ -348,7 +356,7 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
       requireStatus(card, ["backlog", "designing"], event);
       const count = card.rework.design;
       if (count >= request.designLimit) {
-        const evidence = event.evidence ?? [];
+        const evidence = designEvidencePaths(event.evidence);
         changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, "design rework budget exhausted", evidence, card.status) });
       } else {
         changed = withHistory(card, request.metadata, REWORK_KINDS.design, "designing", {
@@ -361,7 +369,7 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
     }
     case "design_blocked": {
       requireStatus(card, ["backlog", "designing"], event);
-      changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, event.reason, event.evidence, card.status === "backlog" ? "backlog" : "designing") });
+      changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, event.reason, designEvidencePaths(event.evidence), card.status === "backlog" ? "backlog" : "designing") });
       effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: false };
       break;
     }
@@ -382,7 +390,7 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
       requireStatus(card, ["design_review"], event);
       const count = card.rework.design;
       if (count >= request.designLimit) {
-        changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, "design PR closed and rework budget exhausted", event.evidence, "design_review") });
+        changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, "design PR closed and rework budget exhausted", designEvidencePaths(event.evidence), "design_review") });
       } else {
         changed = withHistory(card, request.metadata, "design_pr_closed", "designing", {
           rework: { ...card.rework, design: count + 1 },
@@ -564,6 +572,7 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
       let changes: Partial<CardSnapshot> = { blocked: null };
       if (event.proceedUnsplit) {
         if (card.status !== "ready_for_implementation" || event.resumeStatus !== "ready_for_implementation" || !(card.grandfathered_requirements && card.grandfathered_requirements.length > 0) || card.workflow.split_decision.result_path === null || card.workflow.split_decision.decided_at === null) fail("proceed_unsplit is only valid for a grandfathered split-required decision");
+         if (event.proceedUnsplit.splitResultPath !== undefined && event.proceedUnsplit.splitResultPath !== card.workflow.split_decision.result_path) fail("proceed_unsplit must cite the exact stored split evidence");
         if (!card.blocked.reason.startsWith("split is required for a grandfathered card;")) fail("proceed_unsplit cannot override a non-split blocker");
         if (card.workflow.split_decision.override !== null) fail("split override is immutable");
         if (typeof event.proceedUnsplit.reason !== "string" || event.proceedUnsplit.reason.trim() !== event.proceedUnsplit.reason || [...event.proceedUnsplit.reason].length < 1 || [...event.proceedUnsplit.reason].length > 2000 || /[\u0000\r\n]/.test(event.proceedUnsplit.reason)) fail("split override reason must be a trimmed single-line string of 1..2000 characters");
