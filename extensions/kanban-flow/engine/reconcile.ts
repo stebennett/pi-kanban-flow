@@ -6,7 +6,7 @@ import { planLifecycleTransition, type TransitionResult } from "../lifecycle/eff
 export interface StatePullRequestFact {
   readonly number: number;
   readonly url: string;
-  readonly state: "open" | "merged" | "closed";
+  readonly state?: "open" | "merged" | "closed";
   readonly marker: string;
   readonly mergeCommit: string | null;
   readonly reachableFromMain: boolean;
@@ -25,11 +25,12 @@ export type StateReconciliationOutcome =
 /** Reject ambiguity rather than allowing a local or open PR to become authority. */
 export function reconcileStatePullRequests(input: StateReconciliationInput): StateReconciliationOutcome {
   if (!input.freshMainCommit) return { kind: "unresolved", reason: "fresh origin/main is unavailable" };
-  const invalid = input.pullRequests.filter((pr) => !pr.valid || !pr.marker || (pr.state === "merged" && (!pr.mergeCommit || !pr.reachableFromMain)));
+  const invalid = input.pullRequests.filter((pr) => !pr.valid || !pr.marker || !pr.state || (pr.state === "merged" && (!pr.mergeCommit || !pr.reachableFromMain)));
   if (invalid.length) return { kind: "unresolved", reason: "state PR marker or merge evidence is invalid" };
   if (input.pullRequests.length > 1) return { kind: "unresolved", reason: "multiple managed state PRs are ambiguous" };
   const pr = input.pullRequests[0];
   if (!pr) return { kind: "none" };
+  if (!pr.state) return { kind: "unresolved", reason: "state PR has no state" };
   if (pr.state === "open") return { kind: "pending", pullRequest: pr };
   if (pr.state === "closed") return { kind: "unresolved", reason: "closed-unmerged state PR requires explicit recovery" };
   return { kind: "merged", pullRequest: pr };
