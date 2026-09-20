@@ -144,6 +144,7 @@ export type TransitionEvent =
   | { readonly kind: "design_changes_requested"; readonly evidence?: readonly string[] | DesignAttemptEvidence }
   | { readonly kind: "design_blocked"; readonly reason: string; readonly evidence?: readonly string[] | DesignAttemptEvidence }
   | { readonly kind: "design_merged"; readonly evidence: DesignMergeEvidence }
+  | { readonly kind: "recovery_design_merged"; readonly evidence: DesignMergeEvidence }
   | { readonly kind: "design_closed"; readonly evidence?: readonly string[] | DesignAttemptEvidence }
   | { readonly kind: "split_decided"; readonly evidence: SplitEvidence }
   | { readonly kind: "split_needs_human"; readonly resultPath?: string; readonly decidedAt?: string; readonly reason: string; readonly evidence?: readonly string[] }
@@ -373,8 +374,9 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
       effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: false };
       break;
     }
-    case "design_merged": {
-      requireStatus(card, ["design_review"], event);
+    case "design_merged":
+    case "recovery_design_merged": {
+      requireStatus(card, event.kind === "design_merged" ? ["design_review"] : ["backlog", "designing"], event);
       assertMerged(event.evidence.pr);
       if (card.workflow.design.branch) assertManagedBranch(card.workflow.design.branch, "design", card.id);
       if (!card.workflow.design.pr || event.evidence.pr.number !== card.workflow.design.pr.number || event.evidence.pr.head !== card.workflow.design.branch || event.evidence.pr.head_commit !== card.workflow.design.pr.head_commit) fail("merged design PR must match the recorded design PR");
