@@ -199,7 +199,7 @@ function validatePreconditions(board: BoardSnapshot, request: TransitionRequest)
     if (card.workflow.design.pr && request.event.evidence.pr.operation_id !== card.workflow.design.pr.operation_id) fail("design rework must retain the marked PR identity");
     if (!card.workflow.design.pr && request.event.evidence.pr.operation_id !== request.metadata.operationId) fail("new design PR must use the current operation identity");
   }
-  if (request.event.kind === "design_merged") {
+  if (request.event.kind === "design_merged" || request.event.kind === "recovery_design_merged") {
     if (!card.workflow.design.pr || card.workflow.design.pr.number !== request.event.evidence.pr.number || card.workflow.design.pr.operation_id !== request.event.evidence.pr.operation_id) fail("design merge evidence does not match the card");
     if (request.event.evidence.pr.state !== "merged" || request.event.evidence.pr.merge_commit === null) fail("design merge must prove a merged PR");
   }
