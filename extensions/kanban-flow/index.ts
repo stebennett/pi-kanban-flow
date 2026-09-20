@@ -5,6 +5,8 @@ import { createPiApprovalAdapter, requirementsParameters, runRequirementsTool } 
 import { packageRoot } from "./paths.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { kanbanPumpParameters, packageVersionFromManifest, runKanbanPump } from "./tools/kanban-pump.ts";
+import { blockerResolutionParameters, packageVersionForBlocker, runBlockerResolution } from "./tools/blocker-resolution.ts";
 
 export const SUPPORTED_PI_RANGE = ">=0.85.0 <0.86.0";
 
@@ -73,6 +75,30 @@ export default function kanbanFlowExtension(pi: ExtensionAPI): void {
       const thinking = (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const).includes(ctx.thinkingLevel as any) ? ctx.thinkingLevel as any : "medium";
       const details = await runRequirementsTool({ cwd: ctx.cwd, packageVersion: manifest.version, brief: params.brief, parentModel: { provider: ctx.model.provider, id: ctx.model.id, thinking }, modelResolver, approvalAdapter: createPiApprovalAdapter(ctx.ui, ctx.hasUI), interactive: ctx.hasUI && (ctx.mode === "tui" || ctx.mode === "rpc"), signal });
       return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details };
+    },
+  });
+
+  pi.registerTool({
+    name: "kanban_pump",
+    label: "kanban_pump",
+    description: "Run exactly one deterministic kanban pump; proposed state is never authoritative until its state PR merges.",
+    parameters: kanbanPumpParameters,
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const version = await packageVersionFromManifest();
+      const details = await runKanbanPump(ctx.cwd, version, params, signal);
+      return { content: [{ type: "text", text: JSON.stringify(details) }], details };
+    },
+  });
+
+  pi.registerTool({
+    name: "kanban_blocker_resolution",
+    label: "kanban_blocker_resolution",
+    description: "Propose one explicit human blocker resolution state transaction; it never continues the workflow in the same pump.",
+    parameters: blockerResolutionParameters,
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const version = await packageVersionForBlocker();
+      const details = await runBlockerResolution({ cwd: ctx.cwd, packageVersion: version, params, signal });
+      return { content: [{ type: "text", text: JSON.stringify(details) }], details };
     },
   });
 

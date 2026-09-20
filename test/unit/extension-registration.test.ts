@@ -11,5 +11,5 @@ test("extension registration is thin and exposes deterministic workflow tools pl
   };
   extension(fakePi as never);
   assert.deepEqual(commands, ["kanban-validate"]);
-  assert.deepEqual(tools, ["kanban_initialize", "kanban_requirements", "kanban_validate"]);
+  assert.deepEqual(tools, ["kanban_initialize", "kanban_requirements", "kanban_pump", "kanban_blocker_resolution", "kanban_validate"]);
 });
