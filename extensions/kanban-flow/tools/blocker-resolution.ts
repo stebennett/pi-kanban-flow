@@ -27,24 +27,34 @@ export async function runBlockerResolution(input: { cwd: string; packageVersion:
   if (input.params.decision === "cancel") return { version: 1, workflow: "blocker_resolution", status: "cancelled", operation_id: operationId, state_pr_url: "none", card_id: input.params.card_id, next_action: "The blocker remains unchanged.", issues: [] };
   if (!input.params.reason) return { version: 1, workflow: "blocker_resolution", status: "failed", operation_id: operationId, state_pr_url: "none", card_id: input.params.card_id, next_action: "Provide a bounded reason and retry.", issues: [{ code: "reason_required", message: "A human reason is required for blocker resolution." }] };
   let lock: LockHandle | undefined;
+  let result: BlockerResolutionResult | undefined;
+  const checkpoint = async () => {
+    if (input.signal?.aborted) throw new Error("blocker resolution cancelled");
+    if (!lock) throw new Error("lock was not acquired");
+    await lock.heartbeat();
+    if (input.signal?.aborted) throw new Error("blocker resolution cancelled");
+  };
   try {
     const git = new GitAdapter({ cwd: input.cwd }); const root = await git.repositoryRoot(input.cwd); const identity = await deriveGitHubRepositoryIdentity(root, { git });
     lock = await acquireLock({ cwd: root, repositoryId: identity.repositoryId, operationId, command: "blocker-resolution", ttlSeconds: 1800 });
-    await lock.heartbeat();
+    await checkpoint();
     // Authority is always fresh main. Pending or unresolved state PRs stop this
     // operation before the card is even read; proposed/local board content is not
     // evidence for a blocker resolution.
+    await checkpoint();
     await git.fetch("origin", root);
+    await checkpoint();
     const baseCommit = await git.resolveRef("origin/main", root);
     if (!baseCommit) throw new Error("fresh origin/main is unavailable");
     const github = new GhCliAdapter({ cwd: root, repository: identity.repositoryId });
+    await checkpoint();
     const statePrs = await discoverManagedPullRequests(github, { kind: "state" });
     if (statePrs.length > 1) throw new Error("multiple managed state PRs are ambiguous");
     const statePr = statePrs[0]?.pullRequest;
     if (statePr?.state === "open") throw new Error(`state PR #${statePr.number} is pending; reconcile it before resolving a blocker`);
     if (statePr?.state === "closed") throw new Error(`closed-unmerged state PR #${statePr.number} requires explicit recovery`);
     if (statePr?.state === "merged" && (!statePr.merge_commit || !(await git.isAncestor(statePr.merge_commit, baseCommit, root)))) throw new Error("merged state PR is not reachable from fresh origin/main");
-    await lock.heartbeat();
+    await checkpoint();
     const initial = await readBoardRepository(root); const card = initial.cards.find((candidate) => candidate.id === input.params.card_id); if (!card) throw new Error("Card was not found in the authoritative board");
     if (!card.blocked) throw new Error("Card is not blocked");
     const mutation: StateMutation = { cardIds: [card.id], apply(authoritative, context) {
@@ -60,13 +70,20 @@ export async function runBlockerResolution(input: { cwd: string; packageVersion:
       return { snapshot: next, files };
     } };
     const coordinator = new StateTransactionCoordinator(createStateTransactionRepository(), createStateTransactionGit(git), github);
-    await lock.heartbeat();
+    await checkpoint();
     const outcome = await coordinator.propose({ root, repositoryId: identity.repositoryId, packageVersion: input.packageVersion, operationId, mutation });
-    if (outcome.kind === "pending") return { version: 1, workflow: "blocker_resolution", status: "proposed", operation_id: operationId, state_pr_url: outcome.pullRequest.url, card_id: card.id, next_action: "Review and merge the state PR; resolution is not authoritative until merge.", issues: [] };
-    if (outcome.kind !== "proposed" && outcome.kind !== "reused") throw new Error("State authority changed; reconcile before retrying");
-    return { version: 1, workflow: "blocker_resolution", status: "proposed", operation_id: operationId, state_pr_url: outcome.pullRequest.url, card_id: card.id, next_action: "Review and merge the state PR, then run another pump.", issues: [] };
-  } catch (error) { return { version: 1, workflow: "blocker_resolution", status: "failed", operation_id: operationId, state_pr_url: "none", card_id: input.params.card_id, next_action: "Resolve the reported failure and retry after reconciliation.", issues: [{ code: "blocker_resolution_failed", message: (error instanceof Error ? error.message : String(error)).slice(0, 2000) }] }; }
-  finally { if (lock) await lock.release().catch(() => undefined); }
+    if (outcome.kind === "pending") result = { version: 1, workflow: "blocker_resolution", status: "proposed", operation_id: operationId, state_pr_url: outcome.pullRequest.url, card_id: card.id, next_action: "Review and merge the state PR; resolution is not authoritative until merge.", issues: [] };
+    else {
+      if (outcome.kind !== "proposed" && outcome.kind !== "reused") throw new Error("State authority changed; reconcile before retrying");
+      result = { version: 1, workflow: "blocker_resolution", status: "proposed", operation_id: operationId, state_pr_url: outcome.pullRequest.url, card_id: card.id, next_action: "Review and merge the state PR, then run another pump.", issues: [] };
+    }
+  } catch (error) { result = { version: 1, workflow: "blocker_resolution", status: "failed", operation_id: operationId, state_pr_url: "none", card_id: input.params.card_id, next_action: "Resolve the reported failure and retry after reconciliation.", issues: [{ code: "blocker_resolution_failed", message: (error instanceof Error ? error.message : String(error)).slice(0, 2000) }] }; }
+  finally {
+    if (lock) try { await lock.release(); } catch (error) {
+      result = { ...(result ?? { version: 1, workflow: "blocker_resolution", operation_id: operationId, card_id: input.params.card_id, state_pr_url: "none" }), status: "failed", next_action: "Reconcile lock ownership and the state PR before retrying.", issues: [...(result?.issues ?? []), { code: "lock_release_failed", message: (error instanceof Error ? error.message : String(error)).slice(0, 2000) }] };
+    }
+  }
+  return result!;
 }
 
 export async function packageVersionForBlocker(): Promise<string> { const { readFile } = await import("node:fs/promises"); const manifest = JSON.parse(await readFile(`${await packageRoot()}/package.json`, "utf8")) as { version?: string }; return manifest.version ?? "0.0.0"; }
