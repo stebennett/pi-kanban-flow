@@ -100,7 +100,8 @@ export function reconcileProduct(input: ProductReconciliationInput): ProductReco
   if (!pr) return { kind: "wait", reason: "marked product PR is not discoverable" };
   if (input.card.status === "ready_to_ship" && pr.state === "merged") {
     if (!pr.merge_commit || input.mergeReachable !== true || input.reviewedTreeCompatible !== true || input.includedReviewedHead !== true) return { kind: "blocked", reason: "merged product PR lacks complete reachability/tree/head proof" };
-    return { kind: "recovery_adoption", transition: eventTransition(input, { kind: "recovery_product_merged", pr, mergeCommit: pr.merge_commit, deliveredAt: input.metadata.at, evidence: evidence(input) }) };
+    const adoptedPr: PRRecord = { ...pr, operation_id: input.metadata.operationId };
+    return { kind: "recovery_adoption", transition: eventTransition(input, { kind: "recovery_product_merged", pr: adoptedPr, mergeCommit: pr.merge_commit, deliveredAt: input.metadata.at, evidence: evidence(input) }) };
   }
   if (input.card.status !== "shipping") return { kind: "ambiguous", reason: "product PR observed outside shipping status" };
   const identityError = validateIdentity(input, pr);

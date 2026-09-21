@@ -355,8 +355,10 @@ function normalizeCandidate<TBoard extends BoardSnapshot>(source: TBoard, result
   }
   if ((request.event.kind === "design_changes_requested" || request.event.kind === "design_closed" || request.event.kind === "design_blocked") && request.event.evidence) {
     const evidence = request.event.evidence;
-    if (Array.isArray(evidence)) mutable.workflow.design.checker_result_paths = append(mutable.workflow.design.checker_result_paths, evidence);
-    else {
+    if (Array.isArray(evidence)) {
+      if (request.event.kind === "design_blocked") mutable.workflow.design.producer_result_paths = append(mutable.workflow.design.producer_result_paths, evidence);
+      else mutable.workflow.design.checker_result_paths = append(mutable.workflow.design.checker_result_paths, evidence);
+    } else {
       if (!("producerResultPath" in evidence)) fail("design evidence must contain producer and checker paths");
       mutable.workflow.design.producer_result_paths = append(mutable.workflow.design.producer_result_paths, [evidence.producerResultPath]);
       mutable.workflow.design.checker_result_paths = append(mutable.workflow.design.checker_result_paths, [evidence.checkerResultPath]);

@@ -9,6 +9,11 @@ export type ManagedWorktreeKind = "design" | "product";
 export interface ManagedWorktreeIdentity { repositoryId: string; kind: ManagedWorktreeKind; cardId: string; branch: string; }
 export interface ManagedWorktree { readonly path: string; readonly branch: string; readonly base: string; readonly kind: ManagedWorktreeKind; readonly cardId: string; }
 export interface ExactCommitInput { worktree: ManagedWorktree; paths: ReadonlyMap<string, "create" | "modify" | "delete">; message: string; trailers: CommitTrailers; }
+export interface ManagedWorktreeEnsureOptions {
+  /** Allow an existing managed branch to contain the previously committed product/design history. */
+  readonly expectedHead?: string;
+  readonly allowCommittedHistory?: boolean;
+}
 
 const CARD = /^CARD-[0-9]{4}$/;
 const REPOSITORY = /^[a-z0-9._-]+\/[a-z0-9._-]+$/;
@@ -64,7 +69,7 @@ export class ManagedWorktreeManager {
   constructor(private readonly git: GitAdapter, private readonly root: string, private readonly repositoryId: string) {
     if (!REPOSITORY.test(repositoryId)) throw new Error("invalid repository identity");
   }
-  async ensure(identity: ManagedWorktreeIdentity, base: string): Promise<ManagedWorktree> {
+  async ensure(identity: ManagedWorktreeIdentity, base: string, options: ManagedWorktreeEnsureOptions = {}): Promise<ManagedWorktree> {
     if (!isObjectId(base) || identity.repositoryId !== this.repositoryId) throw new Error("invalid worktree base or repository identity");
     const branch = identity.branch;
     const common = await this.git.commonDirectory(this.root);
@@ -76,8 +81,10 @@ export class ManagedWorktreeManager {
       const path = await safeWorktreePath(record.path);
       if (resolve(path) !== resolve(managedWorktreePath(common, identity))) throw new Error("worktree path identity mismatch");
       if (record.detached || record.branch !== branch || !(await this.git.isAncestor(base, record.head, this.root))) throw new Error("worktree branch/base mismatch");
+      if (options.expectedHead && record.head !== options.expectedHead) throw new Error("managed worktree head does not match the expected immutable commit");
       await ensureNoSpecialFiles(path);
-      if ((await this.git.workingDiffPaths(base, path)).length) throw new Error("managed worktree is dirty");
+      const cleanlinessBase = options.allowCommittedHistory ? record.head : base;
+      if ((await this.git.workingDiffPaths(cleanlinessBase, path)).length) throw new Error("managed worktree is dirty");
       return { path, branch, base, kind: identity.kind, cardId: identity.cardId };
     }
     const localBranch = await this.git.branchExists(branch, this.root);

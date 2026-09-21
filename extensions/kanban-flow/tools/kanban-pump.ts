@@ -3,9 +3,12 @@ import { readBoardRepository } from "../board/repository.ts";
 import { runPump, type PumpDependencies } from "../engine/pump.ts";
 import { deriveGitHubRepositoryIdentity } from "../requirements/initialize.ts";
 import { GitAdapter } from "../state-pr/git.ts";
-import { GhCliAdapter, discoverManagedPullRequests } from "../state-pr/github.ts";
+import { GhCliAdapter, type GitHubAdapter } from "../state-pr/github.ts";
 import { createStateTransactionGit, createStateTransactionRepository, StateTransactionCoordinator } from "../state-pr/transaction.ts";
-import { packageRoot } from "../paths.ts";
+import { OneCardLifecycleCoordinator } from "../lifecycle/coordinator.ts";
+import { materializeSnapshot } from "../agents/snapshots.ts";
+import type { ModelResolver, ParentModel } from "../agents/models.ts";
+import type { PersistedTrustReader } from "../agents/trust.ts";
 
 export const kanbanPumpParameters = Type.Object({
   schema_version: Type.Literal(1),
@@ -13,45 +16,63 @@ export const kanbanPumpParameters = Type.Object({
 }, { additionalProperties: false });
 export type KanbanPumpParameters = Static<typeof kanbanPumpParameters>;
 
-/** Optional host seam used by integration tests and embedders. */
-let dependencyFactory: ((cwd: string, packageVersion: string) => Promise<PumpDependencies>) | undefined;
-export function setKanbanPumpDependencyFactory(factory: ((cwd: string, packageVersion: string) => Promise<PumpDependencies>) | undefined): void { dependencyFactory = factory; }
-
-export async function runKanbanPump(cwd: string, packageVersion: string, request: KanbanPumpParameters, signal?: AbortSignal) {
-  const dependencies = dependencyFactory ? await dependencyFactory(cwd, packageVersion) : await defaultDependencies(cwd, packageVersion);
-  return runPump(request, dependencies, signal);
+/** Explicit host capabilities supplied by the active Pi execution context. */
+export interface KanbanPumpHostContext {
+  readonly parentModel?: ParentModel;
+  readonly modelResolver?: ModelResolver;
+  readonly trustReader?: PersistedTrustReader;
+  readonly repositoryId?: string;
+  readonly git?: GitAdapter;
+  readonly github?: GitHubAdapter;
 }
 
-async function defaultDependencies(cwd: string, packageVersion: string): Promise<PumpDependencies> {
-  const git = new GitAdapter({ cwd });
+/** Assemble production dependencies from one explicit host context. */
+export async function createKanbanPumpDependencies(cwd: string, packageVersion: string, host: KanbanPumpHostContext = {}): Promise<PumpDependencies> {
+  const git = host.git ?? new GitAdapter({ cwd });
   const root = await git.repositoryRoot(cwd);
-  const identity = await deriveGitHubRepositoryIdentity(root, { git });
-  const github = new GhCliAdapter({ cwd: root, repository: identity.repositoryId });
-  const coordinator = new StateTransactionCoordinator(createStateTransactionRepository(), createStateTransactionGit(git), github);
+  const identity = host.repositoryId ? { repositoryId: host.repositoryId } : await deriveGitHubRepositoryIdentity(root, { git });
+  const github = host.github ?? new GhCliAdapter({ cwd: root, repository: identity.repositoryId });
+  const coordinator = new OneCardLifecycleCoordinator({
+    root,
+    repositoryId: identity.repositoryId,
+    packageVersion,
+    parentModel: host.parentModel,
+    modelResolver: host.modelResolver,
+    trustReader: host.trustReader,
+    git,
+    github,
+  });
+  const transaction = new StateTransactionCoordinator(createStateTransactionRepository(), createStateTransactionGit(git), github);
   return {
-    root, repositoryId: identity.repositoryId, packageVersion,
-    authoritative: async () => { await git.fetch("origin", root); const baseCommit = await git.resolveRef("origin/main", root); return { baseCommit, board: await readBoardRepository(root) }; },
-    reconcile: async ({ baseCommit }) => {
-      const state = await discoverManagedPullRequests(github, { kind: "state" });
-      if (state.length > 1) return { kind: "unresolved" as const, reason: "multiple managed state PRs are ambiguous" };
-      const pr = state[0]?.pullRequest;
-      if (!pr) return { kind: "none" as const };
-      if (pr.state === "open") return { kind: "pending" as const, reason: `state PR #${pr.number} is pending` };
-      if (pr.state === "closed") return { kind: "unresolved" as const, reason: `state PR #${pr.number} is closed without merge` };
-      if (!pr.merge_commit || !(await git.isAncestor(pr.merge_commit, baseCommit, root))) return { kind: "unresolved" as const, reason: "merged state PR is not reachable from origin/main" };
-      return { kind: "none" as const };
+    root,
+    repositoryId: identity.repositoryId,
+    packageVersion,
+    preflight: async () => coordinator.preflight(),
+    authoritative: async () => {
+      await git.fetch("origin", root);
+      const baseCommit = await git.resolveRef("origin/main", root);
+      const snapshot = await materializeSnapshot(root, baseCommit);
+      try {
+        const board = await readBoardRepository(snapshot.root);
+        return { baseCommit, board: Object.freeze({ ...board, root }) };
+      } finally {
+        await snapshot.cleanup();
+      }
     },
-    // Lifecycle dispatch is deliberately assembled here (rather than in the Pi
-    // adapter); the coordinator owns every state transaction and external PR.
-    // Host contexts may replace only the child-dispatch seam when model access is
-    // required.
-    dispatch: async () => ({ kind: "blocked" as const, blockers: [{ code: "workflow_requires_parent_model", message: "This deterministic tool invocation requires the active Pi lifecycle dispatch context." }] }),
-    transaction: { propose: (plan) => coordinator.propose(plan) },
+    reconcile: (input) => coordinator.reconcile(input),
+    dispatch: (input) => coordinator.dispatch(input),
+    transaction: { propose: (plan) => transaction.propose(plan) },
   };
+}
+
+export async function runKanbanPump(cwd: string, packageVersion: string, request: KanbanPumpParameters, signal?: AbortSignal, host: KanbanPumpHostContext = {}) {
+  const dependencies = await createKanbanPumpDependencies(cwd, packageVersion, host);
+  return runPump(request, dependencies, signal);
 }
 
 export async function packageVersionFromManifest(): Promise<string> {
   const { readFile } = await import("node:fs/promises");
+  const { packageRoot } = await import("../paths.ts");
   const manifest = JSON.parse(await readFile(`${await packageRoot()}/package.json`, "utf8")) as { version?: string };
   return manifest.version ?? "0.0.0";
 }

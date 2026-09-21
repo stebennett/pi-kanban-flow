@@ -35,10 +35,20 @@ export interface PumpPhaseResult {
   readonly issues?: readonly { code: string; message: string; evidence?: readonly string[] }[];
 }
 
+export interface PumpPreflightResult {
+  readonly kind: "ready" | "blocked" | "failed";
+  readonly blockers?: readonly { code: string; message: string; evidence?: readonly string[] }[];
+  readonly issues?: readonly { code: string; message: string; evidence?: readonly string[] }[];
+  readonly activeOverrides?: PumpReport["active_overrides"];
+  readonly models?: PumpReport["models"];
+}
+
 export interface PumpDependencies {
   readonly root: string;
   readonly repositoryId: string;
   readonly packageVersion: string;
+  /** Validate host/model/trust/policy readiness before the authoritative fetch. */
+  readonly preflight?: (input: { signal: AbortSignal; heartbeat: () => Promise<void> }) => Promise<PumpPreflightResult>;
   readonly acquireLock?: (input: { cwd: string; repositoryId: string; operationId: string; command: "kanban"; ttlSeconds: number }) => Promise<LockHandle>;
   readonly ttlSeconds?: number;
   readonly heartbeatSeconds?: number;
@@ -47,13 +57,14 @@ export interface PumpDependencies {
   /** Reconciliation is deliberately before scheduler selection. */
   readonly reconcile: (input: { baseCommit: string; board: BoardSnapshot; signal: AbortSignal; heartbeat: () => Promise<void> }) => Promise<PumpReconciliation>;
   readonly dispatch: (input: { operationId: string; selected: ScheduledCard; board: BoardSnapshot; signal: AbortSignal; heartbeat: () => Promise<void> }) => Promise<PumpPhaseResult>;
-  readonly transaction: Pick<StateTransactionCoordinator, "propose"> | ((plan: { root: string; repositoryId: string; packageVersion: string; operationId: string; mutation: StateMutation; title?: string; body?: string }) => Promise<StateTransactionOutcome>);
+  readonly transaction: Pick<StateTransactionCoordinator, "propose"> | ((plan: { root: string; repositoryId: string; packageVersion: string; operationId: string; transactionId?: string; mutation: StateMutation; title?: string; body?: string }) => Promise<StateTransactionOutcome>);
   readonly activeOverrides?: PumpReport["active_overrides"];
   readonly models?: PumpReport["models"];
 };
 
 function issue(input: { code: string; message: string; evidence?: readonly string[] }) {
-  return { code: input.code, message: input.message.slice(0, 2000), evidence: [...(input.evidence ?? [])] };
+  const message = input.message.replace(/(?:^|[\s(=])\/(?!\/)[^\s,;)]*/g, "$1<path>").replace(/[A-Za-z]:\\[^\s,;)]*/g, "<path>");
+  return { code: input.code, message: message.slice(0, 2000), evidence: [...(input.evidence ?? [])] };
 }
 function baseReport(operationId: string, request: PumpRequest, baseCommit = "none"): PumpReport {
   return {
@@ -74,7 +85,7 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
   if (!Value.Check(PumpRequestSchema, requestValue)) throw new Error("invalid pump request");
   const request = requestValue as PumpRequest;
   const operationId = runtimeId("KFOP");
-  const report = baseReport(operationId, request);
+  let report = baseReport(operationId, request);
   let lock: LockHandle | undefined;
   let timer: NodeJS.Timeout | undefined;
   const controller = new AbortController();
@@ -102,6 +113,24 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
     const every = Math.max(1000, (dependencies.heartbeatSeconds ?? 30) * 1000);
     timer = setInterval(() => { void heartbeat().catch((error) => { heartbeatFailure = error; controller.abort(error); }); }, every);
     await heartbeat();
+    if (dependencies.preflight) {
+      const readiness = await dependencies.preflight({ signal: controller.signal, heartbeat });
+      report = { ...report, active_overrides: [...(readiness.activeOverrides ?? report.active_overrides)], models: [...(readiness.models ?? report.models)] };
+      if (readiness.kind !== "ready") {
+        const blockers = [...(readiness.blockers ?? [])].map(issue);
+        const issues = [...(readiness.issues ?? [])].map(issue);
+        finalReport = buildPumpReport({
+          ...report,
+          status: readiness.kind === "blocked" ? "blocked" : "failed",
+          blockers,
+          issues,
+          transition: { ...report.transition, boundary: readiness.kind === "blocked" ? "blocker" : "failure" },
+          next_human_action: readiness.kind === "blocked" ? "Resolve the reported trust, model, or policy blocker before retrying." : "Resolve the reported preflight failure before retrying.",
+        });
+        break;
+      }
+    }
+    await heartbeat();
     const authoritative = await dependencies.authoritative(controller.signal);
     baseCommit = authoritative.baseCommit;
     await heartbeat();
@@ -115,9 +144,11 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
     if (reconciliation.kind === "mutation") {
       if (!reconciliation.mutation) throw new Error("reconciliation mutation is missing");
       await heartbeat();
+      const transactionId = runtimeId("KFTX");
+      await lock.setTransactionId(transactionId);
       externalActionsStarted = true;
-      const outcome = await propose(dependencies, operationId, reconciliation.mutation);
-      finalReport = buildPumpReport(transactionReport({ ...report, base_commit: baseCommit, action: "reconcile", selected_card_id: reconciliation.cardId ?? "none", transition: { from: reconciliation.from ?? "none", to: reconciliation.to ?? "none", boundary: "state_pr" } }, outcome));
+      const outcome = await propose(dependencies, operationId, reconciliation.mutation, transactionId);
+      finalReport = buildPumpReport(transactionReport({ ...report, base_commit: baseCommit, action: "reconcile", selected_card_id: reconciliation.cardId ?? "none", artifacts: [...(reconciliation.artifacts ?? [])], transition: { from: reconciliation.from ?? "none", to: reconciliation.to ?? "none", boundary: "state_pr" } }, outcome));
       break;
     }
     if (reconciliation.kind === "wait" || reconciliation.kind === "blocked") {
@@ -133,8 +164,10 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
     if (phase.kind !== "mutation") { finalReport = buildPumpReport(reportFromPhase({ ...report, base_commit: baseCommit }, phase, selected)); break; }
     if (!phase.mutation) throw new Error("phase mutation is missing");
     await heartbeat();
+    const transactionId = runtimeId("KFTX");
+    await lock.setTransactionId(transactionId);
     externalActionsStarted = true;
-    const outcome = await propose(dependencies, operationId, phase.mutation);
+    const outcome = await propose(dependencies, operationId, phase.mutation, transactionId);
     finalReport = buildPumpReport(transactionReport(reportFromPhase({ ...report, base_commit: baseCommit }, phase, selected), outcome));
     } while (false);
   } catch (error) {
@@ -157,8 +190,8 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
   return finalReport ?? buildPumpReport(report);
 }
 
-async function propose(dependencies: PumpDependencies, operationId: string, mutation: StateMutation): Promise<StateTransactionOutcome> {
-  const plan = { root: dependencies.root, repositoryId: dependencies.repositoryId, packageVersion: dependencies.packageVersion, operationId, mutation };
+async function propose(dependencies: PumpDependencies, operationId: string, mutation: StateMutation, transactionId?: string): Promise<StateTransactionOutcome> {
+  const plan = { root: dependencies.root, repositoryId: dependencies.repositoryId, packageVersion: dependencies.packageVersion, operationId, transactionId, mutation };
   return typeof dependencies.transaction === "function" ? dependencies.transaction(plan) : dependencies.transaction.propose(plan);
 }
 function transactionReport(report: PumpReport, outcome: StateTransactionOutcome): PumpReport {
