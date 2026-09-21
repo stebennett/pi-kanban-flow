@@ -370,8 +370,11 @@ function normalizeCandidate<TBoard extends BoardSnapshot>(source: TBoard, result
   if ((request.event.kind === "review_changes_requested" || request.event.kind === "review_blocked") && request.event.evidence) {
     mutable.workflow.review.result_paths = append(mutable.workflow.review.result_paths, request.event.evidence);
   }
-  if ((request.event.kind === "shipping_code_failure" || request.event.kind === "shipping_blocked") && request.event.evidence) {
+  if ((request.event.kind === "shipping_code_failure" || request.event.kind === "shipping_blocked" || request.event.kind === "ready_to_ship_blocked") && request.event.evidence) {
     mutable.workflow.ship.verification_result_paths = append(mutable.workflow.ship.verification_result_paths, request.event.evidence);
+  }
+  if (request.event.kind === "product_pr_opened_blocked") {
+    mutable.workflow.ship.verification_result_paths = append(mutable.workflow.ship.verification_result_paths, request.event.evidence.verificationResultPaths);
   }
   if (request.event.kind === "split_decided" && request.event.evidence.decision === "no_split") {
     mutable.workflow.implementation.branch ??= productBranchFor(mutable);

@@ -333,7 +333,16 @@ export class OneCardLifecycleCoordinator {
     const worktree = await manager.ensure({ repositoryId: this.dependencies.repositoryId, kind: "design", cardId: card.id, branch }, await this.dependencies.git.resolveRef("origin/main", this.dependencies.root), { expectedHead: card.workflow.design.pr?.head_commit ?? undefined, allowCommittedHistory: Boolean(card.workflow.design.pr) });
     const base = await this.dependencies.git.resolveRef("origin/main", this.dependencies.root);
     const designInputs = stable({ authoritative_base: base, card, requirements: input.board.requirements ?? null, dependents: input.board.cards.filter((candidate) => candidate.dependencies.includes(card.id)), approved_design: card.workflow.design.approved_commit });
-    const producer = await this.child(input, "design-producer", "producer", input.board.root, base, null, designInputs, { role: "producer", tool: "submit_producer_result", dispatchId: "pending", cardId: card.id, phase: "design" });
+    // Never let the design producer inspect the mutable checkout: it is also
+    // used for worktree and external-action coordination. Archive the exact
+    // authoritative commit and keep that root alive through dispatch.
+    const producerSnapshot = await this.snapshotter(this.dependencies.root, base);
+    let producer: ChildAttempt;
+    try {
+      producer = await this.child(input, "design-producer", "producer", producerSnapshot.root, base, null, designInputs, { role: "producer", tool: "submit_producer_result", dispatchId: "pending", cardId: card.id, phase: "design" }, producerSnapshot);
+    } finally {
+      await producerSnapshot.cleanup();
+    }
     const producerPayload = producer.success.runtime.payload as ProducerResult;
     validateProducerResult(producerPayload, { dispatchId: producer.plan.dispatchId, cardId: card.id, phase: "design" });
     let designValidation;
@@ -485,6 +494,8 @@ export class OneCardLifecycleCoordinator {
     const probeRun = runtimeId("KFRUN", this.now());
     const observations: ProjectCommandObservation[] = [];
     let mutationDetected = false;
+    const identity = (this.dependencies.git as any).repositoryIdentity as ((cwd: string) => Promise<{ head: string; branch: string | null; refs: string }>) | undefined;
+    const commandIdentity = identity ? await identity.call(this.dependencies.git, worktree.path) : { head, branch, refs: "" };
     for (const key of PROJECT_COMMAND_ORDER) {
       const command = input.board.config.project_commands[key];
       if (!command) continue;
@@ -493,7 +504,11 @@ export class OneCardLifecycleCoordinator {
       const observation = { ...({ key, argv: command, status: classifyProjectCommand(result), detail: boundedRedacted(JSON.stringify({ argv: command, exit_code: result.exitCode, signal: result.signal ?? null, timed_out: result.timedOut, aborted: result.aborted ?? false, output_overflow: result.outputOverflow ?? false, stdout: result.stdout, stderr: result.stderr })) } as any), ...result } as ProjectCommandObservation;
       observations.push(observation);
       const dirty = await this.dependencies.git.workingDiffPaths(head, worktree.path);
-      if (dirty.length > 0) mutationDetected = true;
+      const afterIdentity = identity ? await identity.call(this.dependencies.git, worktree.path) : commandIdentity;
+      // A probe is valid only when commands leave the exact reviewed commit,
+      // branch identity, and every ref untouched. Working-tree output is not
+      // sufficient: commands can move HEAD or refs without a diff.
+      if (dirty.length > 0 || afterIdentity.head !== commandIdentity.head || afterIdentity.branch !== commandIdentity.branch || afterIdentity.refs !== commandIdentity.refs) mutationDetected = true;
     }
     const probe = this.parentProbe({ cardId: card.id, probe: "project_commands", observations: observations.map((observation) => ({ key: observation.key, status: mutationDetected ? "unknown" : observation.status, detail: observation.detail })), commit: head, branch, summary: mutationDetected ? "A configured command changed the managed worktree." : `Executed ${observations.length} configured project command(s).`, runId: probeRun });
     await input.heartbeat();
@@ -585,7 +600,7 @@ export class OneCardLifecycleCoordinator {
     const bodyArtifact = producerPayload.artifacts.find((artifact) => artifact.type === "product_pr_body");
     if (producerPayload.status !== "completed" || !bodyArtifact) {
       const artifacts = this.finalizeAttempts(input.board, [producer]);
-      const candidate = this.makeMutation(input.board, [card.id], () => ({ kind: "shipping_blocked", reason: producerPayload.summary, evidence: [artifacts[0]!.path] } as TransitionEvent), artifacts);
+      const candidate = this.makeMutation(input.board, [card.id], () => ({ kind: "ready_to_ship_blocked", reason: producerPayload.summary, evidence: [artifacts[0]!.path] } as TransitionEvent), artifacts);
       return { kind: "mutation", mutation: candidate, from: card.status, to: card.status, artifacts: [artifacts[0]!.path], blockers: [recordIssue("ship_producer_blocked", producerPayload.summary, [artifacts[0]!.path])], boundary: "blocker" };
     }
     const sections = [bodyArtifact.content, `Card ${card.id} acceptance criteria: ${card.acceptance_criteria.map((criterion: any) => criterion.id).join(", ")}.`, `Reviewed implementation commit ${head}; product paths are parent-verified.`, `Review evidence: ${card.workflow.review.result_paths.join(", ") || "none"}.`, "Human merge is required; no operation approves or merges this product PR."];
@@ -628,7 +643,8 @@ export class OneCardLifecycleCoordinator {
         // Pending checks are a normal shipping boundary; the product PR is
         // recorded and later reconciliation owns the wait.
       } else {
-        const candidate = this.makeMutation(input.board, [card.id], () => ({ kind: "shipping_blocked", reason: checkerPayload.summary || verification.failures.join("; ") || "Ship evidence is inconclusive.", evidence: artifacts.map((artifact) => artifact.path) } as TransitionEvent), artifacts);
+        const evidence = { pr: asPrRecord(pr, existing?.marker.operation_id ?? input.operationId, this.now().toISOString()), verificationResultPaths: artifacts.map((artifact) => artifact.path) };
+        const candidate = this.makeMutation(input.board, [card.id], () => card.status === "ready_to_ship" ? ({ kind: "product_pr_opened_blocked", reason: checkerPayload.summary || verification.failures.join("; ") || "Ship evidence is inconclusive.", evidence } as TransitionEvent) : ({ kind: "shipping_blocked", reason: checkerPayload.summary || verification.failures.join("; ") || "Ship evidence is inconclusive.", evidence: artifacts.map((artifact) => artifact.path) } as TransitionEvent), artifacts);
         return { kind: "mutation", mutation: candidate, from: card.status, to: card.status, artifacts: cardArtifactPaths([...artifacts]), blockers: [recordIssue("ship_check_failed", checkerPayload.summary, artifacts.map((artifact) => artifact.path))], boundary: "blocker", externalPrs: [this.reportPr("product", card.id, pr)] };
       }
     }

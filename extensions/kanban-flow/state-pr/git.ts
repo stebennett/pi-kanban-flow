@@ -127,6 +127,13 @@ export class GitAdapter {
     }
     return sortedUniquePaths([...new Set(paths)]);
   }
+  async repositoryIdentity(cwd = this.defaultCwd): Promise<{ readonly head: string; readonly branch: string | null; readonly refs: string }> {
+    const head = await this.resolveRef("HEAD", cwd);
+    const branchResult = await this.run(["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd });
+    const branch = branchResult.code === 0 ? branchResult.stdout.trim() : null;
+    const refs = (await this.require(["for-each-ref", "--format=%(refname)=%(objectname)"], "for-each-ref", { cwd })).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).sort().join("\n");
+    return { head, branch, refs };
+  }
   async isAncestor(ancestor: string, descendant: string, cwd = this.defaultCwd): Promise<boolean> {
     const result = await this.run(["merge-base", "--is-ancestor", arg(ancestor, "ancestor"), arg(descendant, "descendant")], { cwd });
     if (result.code === 0) return true;

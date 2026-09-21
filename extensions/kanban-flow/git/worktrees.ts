@@ -142,7 +142,21 @@ export class ManagedWorktreeManager {
     const records = await this.git.worktrees(this.root);
     const matches = records.filter((record) => resolve(record.path) === resolve(worktree.path) && record.branch === worktree.branch);
     if (matches.length > 1) throw new Error("ambiguous worktree cleanup");
-    if (matches.length === 1) await this.git.removeBranchWorktree(worktree.path, this.root);
-    if (authority === "abandoned") await this.git.run(["branch", "-D", worktree.branch], { cwd: this.root });
+    // Cleanup is deliberately idempotent, but never destructive when Git's
+    // authoritative identity is unclear. A surviving worktree must be clean
+    // at its recorded HEAD and its local branch must still point there.
+    if (matches.length === 1) {
+      const record = matches[0]!;
+      const dirty = await this.git.workingDiffPaths(record.head, record.path);
+      if (dirty.length > 0) throw new Error("managed worktree cleanup requires a clean worktree");
+      const branchHead = await this.git.resolveRef(`refs/heads/${worktree.branch}`, this.root).catch(() => "");
+      if (branchHead !== record.head) throw new Error("managed worktree cleanup has ambiguous branch identity");
+      await this.git.removeBranchWorktree(worktree.path, this.root);
+    }
+    if (authority === "abandoned") {
+      const branchHead = await this.git.resolveRef(`refs/heads/${worktree.branch}`, this.root).catch(() => "");
+      if (!branchHead) return;
+      await this.git.run(["branch", "-D", worktree.branch], { cwd: this.root });
+    }
   }
 }

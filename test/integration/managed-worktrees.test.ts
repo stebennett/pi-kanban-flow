@@ -42,6 +42,7 @@ test("managed worktrees reject traversal and symlink paths", async () => {
     await symlink(join(root, "README.md"), join(worktree.path, "link.txt"));
     await assert.rejects(manager.commitExact({ worktree, paths: new Map([["../escape", "create"]]), message: "kanban: product CARD-0001", trailers: { kind: "product", operation_id: "KFOP-20260101T000000000Z-abcdefgh", card_ids: ["CARD-0001"], transaction_id: null } }), /invalid repository-relative/);
     await assert.rejects(manager.commitExact({ worktree, paths: new Map([["link.txt", "create"]]), message: "kanban: product CARD-0001", trailers: { kind: "product", operation_id: "KFOP-20260101T000000000Z-abcdefgh", card_ids: ["CARD-0001"], transaction_id: null } }), /unsafe/);
+    await rm(join(worktree.path, "link.txt"));
     await manager.cleanup(worktree, "abandoned");
   } finally { await rm(root, { recursive: true, force: true }); await rm(remote, { recursive: true, force: true }); }
 });
