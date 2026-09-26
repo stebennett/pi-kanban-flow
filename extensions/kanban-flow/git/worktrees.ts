@@ -9,6 +9,11 @@ export type ManagedWorktreeKind = "design" | "product";
 export interface ManagedWorktreeIdentity { repositoryId: string; kind: ManagedWorktreeKind; cardId: string; branch: string; }
 export interface ManagedWorktree { readonly path: string; readonly branch: string; readonly base: string; readonly kind: ManagedWorktreeKind; readonly cardId: string; }
 export interface ExactCommitInput { worktree: ManagedWorktree; paths: ReadonlyMap<string, "create" | "modify" | "delete">; message: string; trailers: CommitTrailers; }
+export interface ManagedWorktreeEnsureOptions {
+  /** Allow an existing managed branch to contain the previously committed product/design history. */
+  readonly expectedHead?: string;
+  readonly allowCommittedHistory?: boolean;
+}
 
 const CARD = /^CARD-[0-9]{4}$/;
 const REPOSITORY = /^[a-z0-9._-]+\/[a-z0-9._-]+$/;
@@ -64,7 +69,7 @@ export class ManagedWorktreeManager {
   constructor(private readonly git: GitAdapter, private readonly root: string, private readonly repositoryId: string) {
     if (!REPOSITORY.test(repositoryId)) throw new Error("invalid repository identity");
   }
-  async ensure(identity: ManagedWorktreeIdentity, base: string): Promise<ManagedWorktree> {
+  async ensure(identity: ManagedWorktreeIdentity, base: string, options: ManagedWorktreeEnsureOptions = {}): Promise<ManagedWorktree> {
     if (!isObjectId(base) || identity.repositoryId !== this.repositoryId) throw new Error("invalid worktree base or repository identity");
     const branch = identity.branch;
     const common = await this.git.commonDirectory(this.root);
@@ -76,8 +81,10 @@ export class ManagedWorktreeManager {
       const path = await safeWorktreePath(record.path);
       if (resolve(path) !== resolve(managedWorktreePath(common, identity))) throw new Error("worktree path identity mismatch");
       if (record.detached || record.branch !== branch || !(await this.git.isAncestor(base, record.head, this.root))) throw new Error("worktree branch/base mismatch");
+      if (options.expectedHead && record.head !== options.expectedHead) throw new Error("managed worktree head does not match the expected immutable commit");
       await ensureNoSpecialFiles(path);
-      if ((await this.git.workingDiffPaths(base, path)).length) throw new Error("managed worktree is dirty");
+      const cleanlinessBase = options.allowCommittedHistory ? record.head : base;
+      if ((await this.git.workingDiffPaths(cleanlinessBase, path)).length) throw new Error("managed worktree is dirty");
       return { path, branch, base, kind: identity.kind, cardId: identity.cardId };
     }
     const localBranch = await this.git.branchExists(branch, this.root);
@@ -135,7 +142,21 @@ export class ManagedWorktreeManager {
     const records = await this.git.worktrees(this.root);
     const matches = records.filter((record) => resolve(record.path) === resolve(worktree.path) && record.branch === worktree.branch);
     if (matches.length > 1) throw new Error("ambiguous worktree cleanup");
-    if (matches.length === 1) await this.git.removeBranchWorktree(worktree.path, this.root);
-    if (authority === "abandoned") await this.git.run(["branch", "-D", worktree.branch], { cwd: this.root });
+    // Cleanup is deliberately idempotent, but never destructive when Git's
+    // authoritative identity is unclear. A surviving worktree must be clean
+    // at its recorded HEAD and its local branch must still point there.
+    if (matches.length === 1) {
+      const record = matches[0]!;
+      const dirty = await this.git.workingDiffPaths(record.head, record.path);
+      if (dirty.length > 0) throw new Error("managed worktree cleanup requires a clean worktree");
+      const branchHead = await this.git.resolveRef(`refs/heads/${worktree.branch}`, this.root).catch(() => "");
+      if (branchHead !== record.head) throw new Error("managed worktree cleanup has ambiguous branch identity");
+      await this.git.removeBranchWorktree(worktree.path, this.root);
+    }
+    if (authority === "abandoned") {
+      const branchHead = await this.git.resolveRef(`refs/heads/${worktree.branch}`, this.root).catch(() => "");
+      if (!branchHead) return;
+      await this.git.run(["branch", "-D", worktree.branch], { cwd: this.root });
+    }
   }
 }

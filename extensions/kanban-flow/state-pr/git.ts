@@ -63,6 +63,18 @@ export class GitAdapter {
     const result = await this.require(["diff", "--name-only", "--diff-filter=ACDMRTUXB", `${arg(base, "base")}..${arg(head, "head")}`], "diff", { cwd });
     return sortedUniquePaths(result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean));
   }
+  async diffNameStatus(base: string, head: string, cwd = this.defaultCwd): Promise<readonly { path: string; action: "create" | "modify" | "delete" }[]> {
+    const result = await this.require(["diff", "--name-status", "--find-renames", `${arg(base, "base")}..${arg(head, "head")}`], "diff", { cwd });
+    const entries: { path: string; action: "create" | "modify" | "delete" }[] = [];
+    for (const line of result.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
+      const [status, ...values] = line.split(/\s+/);
+      const path = status?.startsWith("R") || status?.startsWith("C") ? values[1] ?? values[0] : values[0];
+      if (!status || !path) throw new Error("malformed git name-status output");
+      const action = status.startsWith("A") || status.startsWith("C") ? "create" : status.startsWith("D") ? "delete" : "modify";
+      entries.push({ path: repositoryRelativePath(path), action });
+    }
+    return entries.sort((left, right) => left.path.localeCompare(right.path));
+  }
   async diffStat(cwd = this.defaultCwd): Promise<string> {
     return (await this.require(["diff", "--no-ext-diff", "--stat"], "diff", { cwd })).stdout;
   }
@@ -114,6 +126,13 @@ export class GitAdapter {
       }
     }
     return sortedUniquePaths([...new Set(paths)]);
+  }
+  async repositoryIdentity(cwd = this.defaultCwd): Promise<{ readonly head: string; readonly branch: string | null; readonly refs: string }> {
+    const head = await this.resolveRef("HEAD", cwd);
+    const branchResult = await this.run(["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd });
+    const branch = branchResult.code === 0 ? branchResult.stdout.trim() : null;
+    const refs = (await this.require(["for-each-ref", "--format=%(refname)=%(objectname)"], "for-each-ref", { cwd })).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).sort().join("\n");
+    return { head, branch, refs };
   }
   async isAncestor(ancestor: string, descendant: string, cwd = this.defaultCwd): Promise<boolean> {
     const result = await this.run(["merge-base", "--is-ancestor", arg(ancestor, "ancestor"), arg(descendant, "descendant")], { cwd });
