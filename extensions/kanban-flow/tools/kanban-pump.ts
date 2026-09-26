@@ -9,6 +9,8 @@ import { OneCardLifecycleCoordinator } from "../lifecycle/coordinator.ts";
 import { materializeSnapshot } from "../agents/snapshots.ts";
 import type { ModelResolver, ParentModel } from "../agents/models.ts";
 import type { PersistedTrustReader } from "../agents/trust.ts";
+import type { discoverAgents } from "../agents/discover.ts";
+import type { createDispatchPlan, executeDispatch } from "../agents/runner.ts";
 
 export const kanbanPumpParameters = Type.Object({
   schema_version: Type.Literal(1),
@@ -24,6 +26,12 @@ export interface KanbanPumpHostContext {
   readonly repositoryId?: string;
   readonly git?: GitAdapter;
   readonly github?: GitHubAdapter;
+  /** Low-level lifecycle seams are test-only capabilities; production defaults stay in the coordinator. */
+  readonly discover?: typeof discoverAgents;
+  readonly createPlan?: typeof createDispatchPlan;
+  readonly execute?: typeof executeDispatch;
+  readonly snapshotter?: typeof materializeSnapshot;
+  readonly now?: () => Date;
 }
 
 /** Assemble production dependencies from one explicit host context. */
@@ -32,6 +40,7 @@ export async function createKanbanPumpDependencies(cwd: string, packageVersion: 
   const root = await git.repositoryRoot(cwd);
   const identity = host.repositoryId ? { repositoryId: host.repositoryId } : await deriveGitHubRepositoryIdentity(root, { git });
   const github = host.github ?? new GhCliAdapter({ cwd: root, repository: identity.repositoryId });
+  const snapshotter = host.snapshotter ?? materializeSnapshot;
   const coordinator = new OneCardLifecycleCoordinator({
     root,
     repositoryId: identity.repositoryId,
@@ -41,6 +50,11 @@ export async function createKanbanPumpDependencies(cwd: string, packageVersion: 
     trustReader: host.trustReader,
     git,
     github,
+    discover: host.discover,
+    createPlan: host.createPlan,
+    execute: host.execute,
+    snapshotter: host.snapshotter,
+    now: host.now,
   });
   const transaction = new StateTransactionCoordinator(createStateTransactionRepository(), createStateTransactionGit(git), github);
   return {
@@ -51,7 +65,7 @@ export async function createKanbanPumpDependencies(cwd: string, packageVersion: 
     authoritative: async () => {
       await git.fetch("origin", root);
       const baseCommit = await git.resolveRef("origin/main", root);
-      const snapshot = await materializeSnapshot(root, baseCommit);
+      const snapshot = await snapshotter(root, baseCommit);
       try {
         const board = await readBoardRepository(snapshot.root);
         return { baseCommit, board: Object.freeze({ ...board, root }) };
