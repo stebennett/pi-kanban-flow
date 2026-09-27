@@ -355,8 +355,10 @@ function normalizeCandidate<TBoard extends BoardSnapshot>(source: TBoard, result
   }
   if ((request.event.kind === "design_changes_requested" || request.event.kind === "design_closed" || request.event.kind === "design_blocked") && request.event.evidence) {
     const evidence = request.event.evidence;
-    if (Array.isArray(evidence)) mutable.workflow.design.checker_result_paths = append(mutable.workflow.design.checker_result_paths, evidence);
-    else {
+    if (Array.isArray(evidence)) {
+      if (request.event.kind === "design_blocked") mutable.workflow.design.producer_result_paths = append(mutable.workflow.design.producer_result_paths, evidence);
+      else mutable.workflow.design.checker_result_paths = append(mutable.workflow.design.checker_result_paths, evidence);
+    } else {
       if (!("producerResultPath" in evidence)) fail("design evidence must contain producer and checker paths");
       mutable.workflow.design.producer_result_paths = append(mutable.workflow.design.producer_result_paths, [evidence.producerResultPath]);
       mutable.workflow.design.checker_result_paths = append(mutable.workflow.design.checker_result_paths, [evidence.checkerResultPath]);
@@ -368,8 +370,11 @@ function normalizeCandidate<TBoard extends BoardSnapshot>(source: TBoard, result
   if ((request.event.kind === "review_changes_requested" || request.event.kind === "review_blocked") && request.event.evidence) {
     mutable.workflow.review.result_paths = append(mutable.workflow.review.result_paths, request.event.evidence);
   }
-  if ((request.event.kind === "shipping_code_failure" || request.event.kind === "shipping_blocked") && request.event.evidence) {
+  if ((request.event.kind === "shipping_code_failure" || request.event.kind === "shipping_blocked" || request.event.kind === "ready_to_ship_blocked") && request.event.evidence) {
     mutable.workflow.ship.verification_result_paths = append(mutable.workflow.ship.verification_result_paths, request.event.evidence);
+  }
+  if (request.event.kind === "product_pr_opened_blocked") {
+    mutable.workflow.ship.verification_result_paths = append(mutable.workflow.ship.verification_result_paths, request.event.evidence.verificationResultPaths);
   }
   if (request.event.kind === "split_decided" && request.event.evidence.decision === "no_split") {
     mutable.workflow.implementation.branch ??= productBranchFor(mutable);

@@ -4,8 +4,8 @@ import { runPump } from "../../extensions/kanban-flow/engine/pump.ts";
 
 const request = { schema_version: 1 as const, requested_phase: "none" as const };
 const board = { config: { scheduler: { wip_limit: 1 } }, cards: [] } as any;
-function lock() {
-  return { record: {} as any, lockPath: "", heartbeat: async () => ({} as any), setTransactionId: async () => ({} as any), release: async () => undefined };
+function lock(overrides: { release?: () => Promise<void>; heartbeat?: () => Promise<any> } = {}) {
+  return { record: {} as any, lockPath: "", heartbeat: async () => ({} as any), setTransactionId: async () => ({} as any), release: async () => undefined, ...overrides };
 }
 
 test("pump reconciles before scheduler and returns stable idle report", async () => {
@@ -21,6 +21,28 @@ test("pump reconciles before scheduler and returns stable idle report", async ()
   assert.equal(report.status, "no_action");
   assert.equal(report.selected_card_id, "none");
   assert.equal(report.base_commit, "a".repeat(40));
+});
+
+test("release failure converts idle success and preserves report data", async () => {
+  const report = await runPump(request, {
+    root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", acquireLock: async () => lock({ release: async () => { throw new Error("release denied"); } }),
+    authoritative: async () => ({ baseCommit: "c".repeat(40), board }), reconcile: async () => ({ kind: "none" }),
+    dispatch: async () => { throw new Error("must not dispatch"); }, transaction: async () => { throw new Error("must not transact"); },
+  });
+  assert.equal(report.status, "failed_recovery_required");
+  assert.equal(report.base_commit, "c".repeat(40));
+  assert.equal(report.issues.some((entry) => entry.code === "lock_release_failed"), true);
+});
+
+test("heartbeat ownership loss is recovery-required rather than cancellation", async () => {
+  const { LockOwnershipLostError } = await import("../../extensions/kanban-flow/board/lock.ts");
+  const report = await runPump(request, {
+    root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", acquireLock: async () => lock({ heartbeat: async () => { throw new LockOwnershipLostError(); } }),
+    authoritative: async () => ({ baseCommit: "d".repeat(40), board }), reconcile: async () => ({ kind: "none" }),
+    dispatch: async () => { throw new Error("must not dispatch"); }, transaction: async () => { throw new Error("must not transact"); },
+  });
+  assert.equal(report.status, "failed_recovery_required");
+  assert.equal(report.issues[0]?.code, "lock_ownership_lost");
 });
 
 test("phase requests never select an alternate card", async () => {

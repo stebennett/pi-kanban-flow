@@ -154,9 +154,11 @@ export type TransitionEvent =
   | { readonly kind: "review_changes_requested"; readonly evidence?: readonly string[] }
   | { readonly kind: "review_blocked"; readonly reason: string; readonly evidence?: readonly string[] }
   | { readonly kind: "product_pr_opened"; readonly evidence: ProductEvidence }
+  | { readonly kind: "product_pr_opened_blocked"; readonly reason: string; readonly evidence: ProductEvidence }
   | { readonly kind: "shipping_reconciled"; readonly evidence: ProductEvidence }
   | { readonly kind: "shipping_code_failure"; readonly evidence?: readonly string[] }
   | { readonly kind: "shipping_blocked"; readonly reason: string; readonly evidence?: readonly string[] }
+  | { readonly kind: "ready_to_ship_blocked"; readonly reason: string; readonly evidence?: readonly string[] }
   | { readonly kind: "product_merged"; readonly pr: PRRecord; readonly mergeCommit: string; readonly deliveredAt: string }
   | { readonly kind: "recovery_product_merged"; readonly pr: PRRecord; readonly mergeCommit: string; readonly deliveredAt: string; readonly evidence?: readonly string[] }
   | { readonly kind: "blocker_resolved"; readonly resumeStatus: DurableStatus; readonly proceedUnsplit?: { readonly reason: string; readonly decidedAt: string; readonly splitResultPath?: string } }
@@ -202,7 +204,7 @@ const BLOCKER_RESUME: Readonly<Record<DurableStatus, readonly DurableStatus[]>> 
   ready_for_implementation: ["ready_for_implementation"],
   implementing: ["implementing"],
   implementation_review: ["implementation_review", "implementing"],
-  ready_to_ship: ["ready_to_ship", "implementing"],
+  ready_to_ship: ["ready_to_ship", "shipping", "implementing"],
   shipping: ["shipping", "implementing"],
   done: [],
   replaced: [],
@@ -299,7 +301,7 @@ function blocker(card: CardSnapshot, metadata: TransitionMetadata, reason: strin
   if (typeof reason !== "string" || reason.trim() !== reason || [...reason].length < 1 || [...reason].length > 2000 || /[\u0000\r\n]/.test(reason)) fail("blocker reason must be a trimmed single-line string of 1..2000 characters");
   if (!BLOCKER_RESUME[card.status].includes(resumeStatus)) fail(`cannot resume ${card.status} as ${resumeStatus}`);
   if (evidence.length > 32 || new Set(evidence).size !== evidence.length || evidence.some((path) => typeof path !== "string" || !path || path.includes("\\") || /[\u0000\r\n]/.test(path) || path.startsWith("/") || path.split("/").some((part) => part === "" || part === "." || part === ".."))) fail("blocker evidence must be unique repository-relative paths");
-  return { reason, source_phase: card.status as Blocker["source_phase"], resume_status: resumeStatus as Blocker["resume_status"], created_at: metadata.at, evidence: [...evidence] };
+  return { reason, source_phase: card.status as Blocker["source_phase"], resume_status: resumeStatus as Blocker["resume_status"], created_at: metadata.at, evidence: [...evidence].sort((left, right) => left.localeCompare(right)) };
 }
 
 function assertMerged(pr: PRRecord): void {
@@ -514,6 +516,26 @@ export function applyTransition<TBoard extends BoardSnapshot>(board: TBoard, req
         workflow: { ...card.workflow, ship: { ...card.workflow.ship, product_pr: event.evidence.pr, verification_result_paths: appendPaths(card.workflow.ship.verification_result_paths, event.evidence.verificationResultPaths) } },
       });
       effects = { cardId: card.id, from: card.status, to: changed.status, selected: true, reconciliationOnly: false };
+      break;
+    }
+    case "ready_to_ship_blocked": {
+      requireStatus(card, ["ready_to_ship"], event);
+      changed = withHistory(card, request.metadata, "card_blocked", card.status, { blocked: blocker(card, request.metadata, event.reason, event.evidence, "ready_to_ship") });
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: false };
+      break;
+    }
+    case "product_pr_opened_blocked": {
+      requireStatus(card, ["ready_to_ship"], event);
+      if (!card.workflow.implementation.branch || !card.workflow.review.reviewed_commit) fail("blocked product PR requires implementation identity");
+      assertManagedBranch(card.workflow.implementation.branch, "card", card.id);
+      if (event.evidence.verificationResultPaths.length === 0) fail("blocked product PR requires verification evidence");
+      assertOpen(event.evidence.pr, "product PR");
+      if (event.evidence.pr.head !== card.workflow.implementation.branch || event.evidence.pr.head_commit !== card.workflow.review.reviewed_commit) fail("blocked product PR must preserve the reviewed implementation identity");
+      changed = withHistory(card, request.metadata, "card_blocked", "shipping", {
+        blocked: blocker(card, request.metadata, event.reason, event.evidence.verificationResultPaths, "shipping"),
+        workflow: { ...card.workflow, ship: { ...card.workflow.ship, product_pr: event.evidence.pr, verification_result_paths: appendPaths(card.workflow.ship.verification_result_paths, event.evidence.verificationResultPaths) } },
+      });
+      effects = { cardId: card.id, from: card.status, to: changed.status, selected: false, reconciliationOnly: false };
       break;
     }
     case "shipping_reconciled": {

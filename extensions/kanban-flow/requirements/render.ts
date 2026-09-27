@@ -87,8 +87,9 @@ function emptyWorkflow(): Card["workflow"] {
 
 export function renderCardDocument(card: Card, why: string, notes: string): string {
   const identifier = card.id;
-  if (!Value.Check(CardSchema, card as unknown)) throw new Error(`Cannot render invalid card ${identifier}`);
-  const yaml = stringify(card, { lineWidth: 0 }).replace(/\r\n?/g, "\n").replace(/\n*$/u, "\n");
+  const { why: _why, notes: _notes, ...frontmatter } = card as Card & { why?: string; notes?: string };
+  if (!Value.Check(CardSchema, frontmatter as unknown)) throw new Error(`Cannot render invalid card ${identifier}`);
+  const yaml = stringify(frontmatter, { lineWidth: 0 }).replace(/\r\n?/g, "\n").replace(/\n*$/u, "\n");
   return `---\n${yaml}---\n# ${card.id}: ${card.title}\n\n## Why\n\n${why}\n\n## Notes\n\n${notes}\n`.replace(/\n{3,}$/u, "\n\n");
 }
 

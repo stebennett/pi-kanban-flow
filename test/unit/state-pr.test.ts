@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RecordingProcessRunner, type ProcessResult } from "../../extensions/kanban-flow/state-pr/process.ts";
 import { GitAdapter, parseWorktreeList } from "../../extensions/kanban-flow/state-pr/git.ts";
-import { discoverManagedPullRequests, findUniqueManagedPullRequest, type GitHubAdapter, type GitHubPullRequest } from "../../extensions/kanban-flow/state-pr/github.ts";
+import { discoverManagedPullRequests, findUniqueManagedPullRequest, GhCliAdapter, type GitHubAdapter, type GitHubPullRequest } from "../../extensions/kanban-flow/state-pr/github.ts";
 import { assertMarkerMatchesBranch, parseActionMarker, parseCommitTrailers, parsePullRequestMarker, parseResolutionMarker, serializeActionMarker, serializeCommitTrailers, serializePullRequestMarker, serializeResolutionMarker, type PullRequestMarker } from "../../extensions/kanban-flow/state-pr/markers.ts";
 
 const op = "KFOP-20260115T103000000Z-abcdefgh";
@@ -74,4 +74,22 @@ test("managed PR discovery rejects ambiguity and ignores unrelated PRs", async (
   assert.equal(found.length, 1);
   assert.equal(found[0]?.pullRequest.number, 2);
   await assert.rejects(findUniqueManagedPullRequest(new FakeGitHub([managed, pr(3, serializePullRequestMarker(marker))]), { transactionId: tx }), /ambiguous/);
+});
+
+test("GitHub adapter normalizes provider checks and effective review facts through direct argv", async () => {
+  const outputs = [
+    JSON.stringify([{ name: "tests", state: "SUCCESS", bucket: "pass" }, { name: "lint", state: "IN_PROGRESS", bucket: "pending" }]),
+    JSON.stringify({ reviews: [{ author: { login: "alice" }, state: "APPROVED", submittedAt: "2026-01-15T10:00:00Z" }] }),
+  ];
+  const runner = new RecordingProcessRunner(async () => ({ executable: "gh", args: [], code: 0, stdout: outputs.shift()!, stderr: "" }));
+  const github = new GhCliAdapter({ runner, cwd: "/repo", repository: "owner/repo" });
+  assert.deepEqual(await github.getChecks(7), [
+    { name: "tests", status: "success", conclusion: "success", required: true },
+    { name: "lint", status: "in_progress", conclusion: "queued", required: true },
+  ]);
+  assert.deepEqual(await github.getReviews(7), [{ reviewer: "alice", state: "APPROVED", submitted_at: "2026-01-15T10:00:00Z" }]);
+  assert.deepEqual(runner.calls.map((call) => call.args.slice(0, 4)), [
+    ["pr", "checks", "7", "--repo"],
+    ["pr", "view", "7", "--repo"],
+  ]);
 });

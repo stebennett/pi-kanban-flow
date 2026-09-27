@@ -35,10 +35,20 @@ export interface PumpPhaseResult {
   readonly issues?: readonly { code: string; message: string; evidence?: readonly string[] }[];
 }
 
+export interface PumpPreflightResult {
+  readonly kind: "ready" | "blocked" | "failed";
+  readonly blockers?: readonly { code: string; message: string; evidence?: readonly string[] }[];
+  readonly issues?: readonly { code: string; message: string; evidence?: readonly string[] }[];
+  readonly activeOverrides?: PumpReport["active_overrides"];
+  readonly models?: PumpReport["models"];
+}
+
 export interface PumpDependencies {
   readonly root: string;
   readonly repositoryId: string;
   readonly packageVersion: string;
+  /** Validate host/model/trust/policy readiness before the authoritative fetch. */
+  readonly preflight?: (input: { signal: AbortSignal; heartbeat: () => Promise<void> }) => Promise<PumpPreflightResult>;
   readonly acquireLock?: (input: { cwd: string; repositoryId: string; operationId: string; command: "kanban"; ttlSeconds: number }) => Promise<LockHandle>;
   readonly ttlSeconds?: number;
   readonly heartbeatSeconds?: number;
@@ -47,13 +57,14 @@ export interface PumpDependencies {
   /** Reconciliation is deliberately before scheduler selection. */
   readonly reconcile: (input: { baseCommit: string; board: BoardSnapshot; signal: AbortSignal; heartbeat: () => Promise<void> }) => Promise<PumpReconciliation>;
   readonly dispatch: (input: { operationId: string; selected: ScheduledCard; board: BoardSnapshot; signal: AbortSignal; heartbeat: () => Promise<void> }) => Promise<PumpPhaseResult>;
-  readonly transaction: Pick<StateTransactionCoordinator, "propose"> | ((plan: { root: string; repositoryId: string; packageVersion: string; operationId: string; mutation: StateMutation; title?: string; body?: string }) => Promise<StateTransactionOutcome>);
+  readonly transaction: Pick<StateTransactionCoordinator, "propose"> | ((plan: { root: string; repositoryId: string; packageVersion: string; operationId: string; transactionId?: string; mutation: StateMutation; title?: string; body?: string }) => Promise<StateTransactionOutcome>);
   readonly activeOverrides?: PumpReport["active_overrides"];
   readonly models?: PumpReport["models"];
 };
 
 function issue(input: { code: string; message: string; evidence?: readonly string[] }) {
-  return { code: input.code, message: input.message.slice(0, 2000), evidence: [...(input.evidence ?? [])] };
+  const message = input.message.replace(/(?:^|[\s(=])\/(?!\/)[^\s,;)]*/g, "$1<path>").replace(/[A-Za-z]:\\[^\s,;)]*/g, "<path>");
+  return { code: input.code, message: message.slice(0, 2000), evidence: [...(input.evidence ?? [])] };
 }
 function baseReport(operationId: string, request: PumpRequest, baseCommit = "none"): PumpReport {
   return {
@@ -74,7 +85,7 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
   if (!Value.Check(PumpRequestSchema, requestValue)) throw new Error("invalid pump request");
   const request = requestValue as PumpRequest;
   const operationId = runtimeId("KFOP");
-  const report = baseReport(operationId, request);
+  let report = baseReport(operationId, request);
   let lock: LockHandle | undefined;
   let timer: NodeJS.Timeout | undefined;
   const controller = new AbortController();
@@ -83,18 +94,42 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
   let baseCommit = "none";
   let selected: ScheduledCard | undefined;
   let externalActionsStarted = false;
+  let finalReport: PumpReport | undefined;
+  let heartbeatFailure: unknown;
   const acquire = dependencies.acquireLock ?? ((input) => acquireLock({ ...input, ttlSeconds: dependencies.ttlSeconds ?? 1800 }));
   const heartbeat = async () => {
-    if (controller.signal.aborted) throw new Error("pump cancelled");
+    if (controller.signal.aborted) {
+      if (heartbeatFailure instanceof LockOwnershipLostError) throw heartbeatFailure;
+      throw new Error("pump cancelled");
+    }
     if (!lock) throw new LockOwnershipLostError();
     await lock.heartbeat();
     if (signal?.aborted) throw new Error("pump cancelled");
   };
   try {
+    do {
     lock = await acquire({ cwd: dependencies.root, repositoryId: dependencies.repositoryId, operationId, command: "kanban", ttlSeconds: dependencies.ttlSeconds ?? 1800 });
     await heartbeat();
     const every = Math.max(1000, (dependencies.heartbeatSeconds ?? 30) * 1000);
-    timer = setInterval(() => { void heartbeat().catch(() => controller.abort()); }, every);
+    timer = setInterval(() => { void heartbeat().catch((error) => { heartbeatFailure = error; controller.abort(error); }); }, every);
+    await heartbeat();
+    if (dependencies.preflight) {
+      const readiness = await dependencies.preflight({ signal: controller.signal, heartbeat });
+      report = { ...report, active_overrides: [...(readiness.activeOverrides ?? report.active_overrides)], models: [...(readiness.models ?? report.models)] };
+      if (readiness.kind !== "ready") {
+        const blockers = [...(readiness.blockers ?? [])].map(issue);
+        const issues = [...(readiness.issues ?? [])].map(issue);
+        finalReport = buildPumpReport({
+          ...report,
+          status: readiness.kind === "blocked" ? "blocked" : "failed",
+          blockers,
+          issues,
+          transition: { ...report.transition, boundary: readiness.kind === "blocked" ? "blocker" : "failure" },
+          next_human_action: readiness.kind === "blocked" ? "Resolve the reported trust, model, or policy blocker before retrying." : "Resolve the reported preflight failure before retrying.",
+        });
+        break;
+      }
+    }
     await heartbeat();
     const authoritative = await dependencies.authoritative(controller.signal);
     baseCommit = authoritative.baseCommit;
@@ -103,43 +138,60 @@ export async function runPump(requestValue: unknown, dependencies: PumpDependenc
     if (reconciliation.kind === "pending" || reconciliation.kind === "unresolved") {
       const waits = reconciliation.kind === "pending" ? [{ code: "state_pr_pending", message: reconciliation.reason ?? "A state PR is pending" }] : [{ code: "state_authority_unresolved", message: reconciliation.reason ?? "State authority is unresolved" }];
       const result = { ...report, status: reconciliation.kind === "pending" ? "pending" : "blocked", base_commit: baseCommit, waits: reconciliation.kind === "pending" ? waits.map(issue) : [], blockers: reconciliation.kind === "unresolved" ? waits.map(issue) : [], transition: { ...report.transition, boundary: reconciliation.kind === "pending" ? "external_wait" : "blocker" }, next_human_action: reconciliation.kind === "pending" ? "Merge or resolve the pending state PR, then run another pump." : "Resolve the ambiguous state authority before retrying." } as PumpReport;
-      return buildPumpReport(result);
+      finalReport = buildPumpReport(result);
+      break;
     }
     if (reconciliation.kind === "mutation") {
       if (!reconciliation.mutation) throw new Error("reconciliation mutation is missing");
       await heartbeat();
+      const transactionId = runtimeId("KFTX");
+      await lock.setTransactionId(transactionId);
       externalActionsStarted = true;
-      const outcome = await propose(dependencies, operationId, reconciliation.mutation);
-      return buildPumpReport(transactionReport({ ...report, base_commit: baseCommit, action: "reconcile", selected_card_id: reconciliation.cardId ?? "none", transition: { from: reconciliation.from ?? "none", to: reconciliation.to ?? "none", boundary: "state_pr" } }, outcome));
+      const outcome = await propose(dependencies, operationId, reconciliation.mutation, transactionId);
+      finalReport = buildPumpReport(transactionReport({ ...report, base_commit: baseCommit, action: "reconcile", selected_card_id: reconciliation.cardId ?? "none", artifacts: [...(reconciliation.artifacts ?? [])], transition: { from: reconciliation.from ?? "none", to: reconciliation.to ?? "none", boundary: "state_pr" } }, outcome));
+      break;
     }
     if (reconciliation.kind === "wait" || reconciliation.kind === "blocked") {
-      return buildPumpReport({ ...report, base_commit: baseCommit, status: reconciliation.kind === "wait" ? "waiting" : "blocked", waits: [...(reconciliation.waits ?? [])].map(issue), blockers: [...(reconciliation.blockers ?? [])].map(issue), transition: { ...report.transition, boundary: reconciliation.kind === "wait" ? "external_wait" : "blocker" }, next_human_action: reconciliation.kind === "wait" ? "Wait for external authority, then run another pump." : "Resolve the reported blocker before retrying." });
+      finalReport = buildPumpReport({ ...report, base_commit: baseCommit, status: reconciliation.kind === "wait" ? "waiting" : "blocked", waits: [...(reconciliation.waits ?? [])].map(issue), blockers: [...(reconciliation.blockers ?? [])].map(issue), transition: { ...report.transition, boundary: reconciliation.kind === "wait" ? "external_wait" : "blocker" }, next_human_action: reconciliation.kind === "wait" ? "Wait for external authority, then run another pump." : "Resolve the reported blocker before retrying." });
+      break;
     }
     selected = scheduleNextCard(authoritative.board as unknown as SchedulerBoardSnapshot, { wipLimit: authoritative.board.config.scheduler.wip_limit }) ?? undefined;
-    if (!selected) return noActionReport({ baseCommit, operationId, requestedPhase: request.requested_phase });
+    if (!selected) { finalReport = noActionReport({ baseCommit, operationId, requestedPhase: request.requested_phase }); break; }
     const requestedAction = request.requested_phase === "none" ? undefined : request.requested_phase === "split_decision" ? "split_decision" : request.requested_phase;
-    if (requestedAction && selected.nextAction !== requestedAction) return buildPumpReport({ ...report, base_commit: baseCommit, status: "phase_not_eligible", transition: { ...report.transition, boundary: "no_action" }, next_human_action: "Run the requested phase when the scheduler selects a matching legal action." });
+    if (requestedAction && selected.nextAction !== requestedAction) { finalReport = buildPumpReport({ ...report, base_commit: baseCommit, status: "phase_not_eligible", transition: { ...report.transition, boundary: "no_action" }, next_human_action: "Run the requested phase when the scheduler selects a matching legal action." }); break; }
     await heartbeat();
     const phase = await dependencies.dispatch({ operationId, selected, board: authoritative.board, signal: controller.signal, heartbeat });
-    if (phase.kind !== "mutation") return buildPumpReport(reportFromPhase({ ...report, base_commit: baseCommit }, phase, selected));
+    if (phase.kind !== "mutation") { finalReport = buildPumpReport(reportFromPhase({ ...report, base_commit: baseCommit }, phase, selected)); break; }
     if (!phase.mutation) throw new Error("phase mutation is missing");
     await heartbeat();
+    const transactionId = runtimeId("KFTX");
+    await lock.setTransactionId(transactionId);
     externalActionsStarted = true;
-    const outcome = await propose(dependencies, operationId, phase.mutation);
-    return buildPumpReport(transactionReport(reportFromPhase({ ...report, base_commit: baseCommit }, phase, selected), outcome));
+    const outcome = await propose(dependencies, operationId, phase.mutation, transactionId);
+    finalReport = buildPumpReport(transactionReport(reportFromPhase({ ...report, base_commit: baseCommit }, phase, selected), outcome));
+    } while (false);
   } catch (error) {
     const external = error instanceof LockContentionError ? false : externalActionsStarted;
-    const result = { ...report, base_commit: baseCommit, status: signal?.aborted ? "cancelled" : external ? "failed_recovery_required" : "failed", issues: [issue({ code: error instanceof LockContentionError ? "lock_contention" : "pump_failed", message: error instanceof Error ? error.message : String(error) })], next_human_action: error instanceof LockContentionError ? "Wait for the other pump to finish." : "Inspect the failure and retry after reconciliation." } as PumpReport;
-    return buildPumpReport(result);
+    const ownershipLost = error instanceof LockOwnershipLostError;
+    const result = { ...report, base_commit: baseCommit, status: ownershipLost || external ? "failed_recovery_required" : signal?.aborted ? "cancelled" : "failed", issues: [issue({ code: error instanceof LockContentionError ? "lock_contention" : ownershipLost ? "lock_ownership_lost" : "pump_failed", message: error instanceof Error ? error.message : String(error), evidence: ownershipLost ? ["lock heartbeat/release evidence is unavailable"] : undefined })], next_human_action: error instanceof LockContentionError ? "Wait for the other pump to finish." : ownershipLost ? "Reconcile remote authority and inspect the lock before retrying." : "Inspect the failure and retry after reconciliation." } as PumpReport;
+    finalReport = buildPumpReport(result);
   } finally {
     if (timer) clearInterval(timer);
     signal?.removeEventListener("abort", abort);
-    if (lock) { try { await lock.release(); } catch { /* report cannot be replaced after return; release is best effort */ } }
+    if (lock) {
+      try { await lock.release(); }
+      catch (error) {
+        const releaseIssue = issue({ code: "lock_release_failed", message: error instanceof Error ? error.message : String(error), evidence: ["lock release was not confirmed"] });
+        const base = finalReport ?? report;
+        finalReport = buildPumpReport({ ...base, status: "failed_recovery_required", issues: [...base.issues, releaseIssue], next_human_action: "Inspect lock ownership and reconcile external authority before retrying." });
+      }
+    }
   }
+  return finalReport ?? buildPumpReport(report);
 }
 
-async function propose(dependencies: PumpDependencies, operationId: string, mutation: StateMutation): Promise<StateTransactionOutcome> {
-  const plan = { root: dependencies.root, repositoryId: dependencies.repositoryId, packageVersion: dependencies.packageVersion, operationId, mutation };
+async function propose(dependencies: PumpDependencies, operationId: string, mutation: StateMutation, transactionId?: string): Promise<StateTransactionOutcome> {
+  const plan = { root: dependencies.root, repositoryId: dependencies.repositoryId, packageVersion: dependencies.packageVersion, operationId, transactionId, mutation };
   return typeof dependencies.transaction === "function" ? dependencies.transaction(plan) : dependencies.transaction.propose(plan);
 }
 function transactionReport(report: PumpReport, outcome: StateTransactionOutcome): PumpReport {
