@@ -301,7 +301,7 @@ function blocker(card: CardSnapshot, metadata: TransitionMetadata, reason: strin
   if (typeof reason !== "string" || reason.trim() !== reason || [...reason].length < 1 || [...reason].length > 2000 || /[\u0000\r\n]/.test(reason)) fail("blocker reason must be a trimmed single-line string of 1..2000 characters");
   if (!BLOCKER_RESUME[card.status].includes(resumeStatus)) fail(`cannot resume ${card.status} as ${resumeStatus}`);
   if (evidence.length > 32 || new Set(evidence).size !== evidence.length || evidence.some((path) => typeof path !== "string" || !path || path.includes("\\") || /[\u0000\r\n]/.test(path) || path.startsWith("/") || path.split("/").some((part) => part === "" || part === "." || part === ".."))) fail("blocker evidence must be unique repository-relative paths");
-  return { reason, source_phase: card.status as Blocker["source_phase"], resume_status: resumeStatus as Blocker["resume_status"], created_at: metadata.at, evidence: [...evidence] };
+  return { reason, source_phase: card.status as Blocker["source_phase"], resume_status: resumeStatus as Blocker["resume_status"], created_at: metadata.at, evidence: [...evidence].sort((left, right) => left.localeCompare(right)) };
 }
 
 function assertMerged(pr: PRRecord): void {

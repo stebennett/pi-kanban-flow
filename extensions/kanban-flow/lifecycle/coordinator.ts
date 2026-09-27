@@ -252,7 +252,11 @@ export class OneCardLifecycleCoordinator {
         if (design[0] && ["design_review", "backlog", "designing"].includes(card.status)) {
           if (!card.workflow.design.pr) return { kind: "blocked", blockers: [recordIssue("design_orphan_requires_recovery", `A marked design PR exists for ${card.id} without authoritative card metadata.`)] };
           const pr = asPrRecord(design[0].pullRequest, design[0].marker.operation_id, this.now().toISOString());
-          const diff = await this.dependencies.git.diffNameStatus(input.baseCommit, pr.head_commit, this.dependencies.root).catch(() => []);
+          // The design branch may have been opened before the state PR merged. Use
+          // the branch's merge-base so unrelated state-PR files are not treated
+          // as design content during the later reconciliation pump.
+          const designBase = await this.dependencies.git.parentCommit(pr.head_commit, this.dependencies.root).catch(async () => this.dependencies.git.mergeBase(input.baseCommit, pr.head_commit, this.dependencies.root).catch(() => input.baseCommit));
+          const diff = await this.dependencies.git.diffNameStatus(designBase, pr.head_commit, this.dependencies.root).catch(() => []);
           const outcome = await (await import("../reconciliation/design.ts")).reconcileDesign({ card, board: input.board as any, pullRequest: pr, freshMainCommit: input.baseCommit, diff, expectedDesignPath: `docs/designs/${card.id}.md`, isReachableFromMain: (merge, main) => this.dependencies.git.isAncestor(merge, main, this.dependencies.root), designLimit: input.board.config.rework.design_limit, transition: { metadata: { at: this.now().toISOString(), operationId: runtimeId("KFOP", this.now()), transactionId: runtimeId("KFTX", this.now()), historyId: runtimeId("KFH", this.now()) }, implementationLimit: input.board.config.rework.implementation_limit } as any });
           if (outcome.kind === "wait") effects.push({ cardId: card.id, result: { kind: "wait", waits: [{ code: "design_pr_open", message: outcome.reason ?? "Design PR is open." }] } });
           else if (outcome.kind === "merged" || outcome.kind === "recovery_adoption" || outcome.kind === "closed_retry" || outcome.kind === "closed_blocked") {
@@ -461,8 +465,12 @@ export class OneCardLifecycleCoordinator {
     const expectedHead = card.workflow.implementation.head_commit ?? undefined;
     const manager = new ManagedWorktreeManager(this.dependencies.git, this.dependencies.root, this.dependencies.repositoryId);
     await input.heartbeat();
-    const worktree = await manager.ensure({ repositoryId: this.dependencies.repositoryId, kind: "product", cardId: card.id, branch }, await this.dependencies.git.resolveRef("origin/main", this.dependencies.root), { expectedHead, allowCommittedHistory: Boolean(expectedHead) });
+    const productBase = expectedHead ?? await this.dependencies.git.resolveRef("origin/main", this.dependencies.root);
+    const worktree = await manager.ensure({ repositoryId: this.dependencies.repositoryId, kind: "product", cardId: card.id, branch }, productBase, { expectedHead, allowCommittedHistory: Boolean(expectedHead) });
     const planMap = new Map(planned.map((entry) => [entry.path, entry.action]));
+    // Give producers a writable parent for every approved create/modify path;
+    // Git tracks files, not directories, so this does not widen the exact diff.
+    for (const entry of planned) if (entry.action !== "delete") await mkdir(join(worktree.path, dirname(entry.path)), { recursive: true });
     const dispatchInputs = stable({ card, approved_design_commit: approved, design: designContent, planned_paths: planned, branch, product_base: await this.dependencies.git.resolveRef("origin/main", this.dependencies.root), test_first: true });
     const attempt = await this.child(input, "implementer", "producer", worktree.path, expectedHead ?? worktree.base, branch, dispatchInputs, { role: "producer", tool: "submit_producer_result", dispatchId: "pending", cardId: card.id, phase: "implementation" }, undefined, { planned: Object.fromEntries(planMap), commands: commandMap(input.board.config), protectedPrefixes: [".git", "docs/cards", "docs/designs"], timeoutMs: 300_000 });
     const result = attempt.success.runtime.payload as ProducerResult;
@@ -473,10 +481,14 @@ export class OneCardLifecycleCoordinator {
       const candidate = this.makeMutation(input.board, [card.id], () => event, artifacts);
       return { kind: "mutation", mutation: candidate, from: card.status, to: card.status, artifacts: [artifacts[0]!.path], blockers: [recordIssue("implementation_blocked", result.summary, [artifacts[0]!.path])], boundary: "blocker" };
     }
-    const actual = await validateImplementationDiff(worktree.path, planMap);
-    if (actual.some((path) => actionForPath(path, planMap) !== planMap.get(path))) return { kind: "failure", issues: [recordIssue("implementation_path_policy_failed", "Implementation diff did not match the approved design paths.")] };
+    // A path created by the first implementation is necessarily modified by a
+    // later bounded rework. Its authority remains the same approved path; only
+    // the Git action is relative to the immutable implementation head.
+    const commitPlan = expectedHead ? new Map([...planMap].map(([path, action]) => [path, action === "create" ? "modify" as const : action])) : planMap;
+    const actual = await validateImplementationDiff(worktree.path, commitPlan);
+    if (actual.some((path) => actionForPath(path, commitPlan) !== commitPlan.get(path))) return { kind: "failure", issues: [recordIssue("implementation_path_policy_failed", "Implementation diff did not match the approved design paths.")] };
     await input.heartbeat();
-    const head = await manager.commitExact({ worktree, paths: planMap, message: `kanban: product ${card.id}`, trailers: productCommitTrailers(input.operationId, card.id) });
+    const head = await manager.commitExact({ worktree, paths: commitPlan, message: `kanban: product ${card.id}`, trailers: productCommitTrailers(input.operationId, card.id) });
     if (!isObjectId(head)) return { kind: "failure", issues: [recordIssue("implementation_commit_invalid", "Git did not return a valid implementation commit.")] };
     const event: TransitionEvent = { kind: "implementation_completed", evidence: { resultPath: artifacts[0]!.path, headCommit: head } };
     const candidate = this.makeMutation(input.board, [card.id], () => event, artifacts);
@@ -490,7 +502,7 @@ export class OneCardLifecycleCoordinator {
     if (!head || !branch) return { kind: "failure", issues: [recordIssue("review_precondition_failed", "Review requires an immutable implementation head and product branch.")] };
     const manager = new ManagedWorktreeManager(this.dependencies.git, this.dependencies.root, this.dependencies.repositoryId);
     await input.heartbeat();
-    const worktree = await manager.ensure({ repositoryId: this.dependencies.repositoryId, kind: "product", cardId: card.id, branch }, await this.dependencies.git.resolveRef("origin/main", this.dependencies.root), { expectedHead: head, allowCommittedHistory: true });
+    const worktree = await manager.ensure({ repositoryId: this.dependencies.repositoryId, kind: "product", cardId: card.id, branch }, head, { expectedHead: head, allowCommittedHistory: true });
     const probeRun = runtimeId("KFRUN", this.now());
     const observations: ProjectCommandObservation[] = [];
     let mutationDetected = false;
@@ -571,8 +583,12 @@ export class OneCardLifecycleCoordinator {
     const base = await this.dependencies.git.resolveRef("origin/main", this.dependencies.root);
     const manager = new ManagedWorktreeManager(this.dependencies.git, this.dependencies.root, this.dependencies.repositoryId);
     await input.heartbeat();
-    const worktree = await manager.ensure({ repositoryId: this.dependencies.repositoryId, kind: "product", cardId: card.id, branch }, base, { expectedHead: head, allowCommittedHistory: true });
-    const diff = await this.dependencies.git.diffNameStatus(base, head, this.dependencies.root);
+    const worktree = await manager.ensure({ repositoryId: this.dependencies.repositoryId, kind: "product", cardId: card.id, branch }, head, { expectedHead: head, allowCommittedHistory: true });
+    // State PR merges may advance main after the product branch was created;
+    // compare against the branch's merge-base so those unrelated board changes
+    // do not erase the reviewed product diff.
+    const productBase = await this.dependencies.git.mergeBase(base, head, this.dependencies.root);
+    const diff = await this.dependencies.git.diffNameStatus(productBase, head, this.dependencies.root);
     await input.heartbeat();
     const designSnapshot = card.workflow.design.approved_commit ? await this.snapshotter(this.dependencies.root, card.workflow.design.approved_commit) : undefined;
     let designContent = "";
@@ -655,7 +671,7 @@ export class OneCardLifecycleCoordinator {
   }
 
   private reportPr(kind: "design" | "product", cardId: string, pr: GitHubPullRequest) {
-    return { kind, card_id: cardId, number: pr.number, url: pr.url, state: pr.state, head: pr.head, head_commit: pr.head_commit, merge_commit: pr.merge_commit } as any;
+    return { kind, card_id: cardId, number: pr.number, url: pr.url, state: pr.state, head: pr.head, head_commit: pr.head_commit, merge_commit: pr.merge_commit ?? "none" } as any;
   }
 
   private async writeDesignFile(worktree: ManagedWorktree, path: string, content: string): Promise<void> {
@@ -689,7 +705,7 @@ export class OneCardLifecycleCoordinator {
     const output: DurableArtifact[] = [];
     for (let index = 0; index < attempts.length; index += 1) {
       const attempt = attempts[index]!;
-      const attestation = buildChildAttestation(attempt.plan, attempt.success, attempt.identity, { roots: { "<PACKAGE_ROOT>": this.packageRootPath, "<REPOSITORY_ROOT>": this.dependencies.root, "<SNAPSHOT_ROOT>": attempt.identity.snapshotCommit ?? "", "<WORKTREE_ROOT>": this.dependencies.root } }, allocation.byAttempt[index]!);
+      const attestation = buildChildAttestation(attempt.plan, attempt.success, attempt.identity, { roots: { "<PACKAGE_ROOT>": this.packageRootPath, "<REPOSITORY_ROOT>": this.dependencies.root, "<WORKTREE_ROOT>": this.dependencies.root } }, allocation.byAttempt[index]!);
       const rendered = renderLifecycleArtifact(attestation);
       output.push({ path: rendered.path, bytes: rendered.bytes, findingIds: allocation.byAttempt[index]! });
     }

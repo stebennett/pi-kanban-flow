@@ -59,6 +59,12 @@ export class GitAdapter {
     const result = await this.require(["worktree", "list", "--porcelain"], "worktree list", { cwd });
     return parseWorktreeList(result.stdout);
   }
+  async parentCommit(commit: string, cwd = this.defaultCwd): Promise<string> {
+    return (await this.require(["rev-parse", `${arg(commit, "commit")}^`], "rev-parse", { cwd })).stdout.trim();
+  }
+  async mergeBase(left: string, right: string, cwd = this.defaultCwd): Promise<string> {
+    return (await this.require(["merge-base", arg(left, "left"), arg(right, "right")], "merge-base", { cwd })).stdout.trim();
+  }
   async diffNameOnly(base: string, head: string, cwd = this.defaultCwd): Promise<string[]> {
     const result = await this.require(["diff", "--name-only", "--diff-filter=ACDMRTUXB", `${arg(base, "base")}..${arg(head, "head")}`], "diff", { cwd });
     return sortedUniquePaths(result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean));

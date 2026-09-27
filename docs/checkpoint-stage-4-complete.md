@@ -44,7 +44,7 @@ Validation run on this completion branch:
 
 ```text
 npm run typecheck   # pass
-npm test            # 189 tests: 180 passed, 9 explicit opt-in skips
+npm test            # 199 tests: 190 passed, 9 explicit opt-in skips
 npm run package    # pass (npm pack --dry-run)
 npm run package:check # pass
  git diff --check   # pass

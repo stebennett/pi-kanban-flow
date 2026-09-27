@@ -80,11 +80,21 @@ export class ManagedWorktreeManager {
       const record = matches[0]!;
       const path = await safeWorktreePath(record.path);
       if (resolve(path) !== resolve(managedWorktreePath(common, identity))) throw new Error("worktree path identity mismatch");
-      if (record.detached || record.branch !== branch || !(await this.git.isAncestor(base, record.head, this.root))) throw new Error("worktree branch/base mismatch");
-      if (options.expectedHead && record.head !== options.expectedHead) throw new Error("managed worktree head does not match the expected immutable commit");
+      if (record.detached || record.branch !== branch) throw new Error("worktree branch/base mismatch");
+      if (options.expectedHead !== undefined && record.head !== options.expectedHead) throw new Error("managed worktree head does not match the expected immutable commit");
       await ensureNoSpecialFiles(path);
-      const cleanlinessBase = options.allowCommittedHistory ? record.head : base;
-      if ((await this.git.workingDiffPaths(cleanlinessBase, path)).length) throw new Error("managed worktree is dirty");
+      // A split state PR can advance origin/main while this untouched product
+      // branch still points at the old base. Reuse it only when there is no
+      // immutable head contract, it is clean at its recorded head, and the
+      // requested base is a fast-forward. All other base changes remain strict.
+      const cleanAtRecordedHead = (await this.git.workingDiffPaths(record.head, path)).length === 0;
+      if (!(await this.git.isAncestor(base, record.head, this.root))) {
+        if (options.expectedHead !== undefined || !(await this.git.isAncestor(record.head, base, this.root))) throw new Error("worktree branch/base mismatch");
+        if (!cleanAtRecordedHead) throw new Error("managed worktree is dirty");
+        await this.git.require(["merge", "--ff-only", base], "worktree fast-forward", { cwd: path });
+      } else if (!cleanAtRecordedHead || (options.allowCommittedHistory === false && (await this.git.workingDiffPaths(base, path)).length)) {
+        throw new Error("managed worktree is dirty");
+      }
       return { path, branch, base, kind: identity.kind, cardId: identity.cardId };
     }
     const localBranch = await this.git.branchExists(branch, this.root);
