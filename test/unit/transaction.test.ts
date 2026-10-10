@@ -10,8 +10,10 @@ const snapshot = { root: "/repo", board: {}, config: {}, cards: [], requirements
 class FakeGit implements StateTransactionGit {
   readonly calls: string[] = [];
   base = oid;
+  mergedReachable = true;
   async fetch(): Promise<void> { this.calls.push("fetch"); }
   async resolveRef(): Promise<string> { this.calls.push("resolve"); return this.base; }
+  async isAncestor(): Promise<boolean> { this.calls.push("ancestor"); return this.mergedReachable; }
   async createWorktree(input: { branch: string; base: string }): Promise<{ path: string; branch: string }> { this.calls.push("worktree"); return { path: "/tmp/state", branch: input.branch }; }
   async diffPaths(): Promise<readonly string[]> { return ["docs/cards/board.yaml"]; }
   async stageExact(): Promise<void> { this.calls.push("stage"); }
@@ -73,6 +75,17 @@ test("merged state PRs remain history and do not block the next transaction", as
   const next = await coordinator.propose({ root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", operationId: "KFOP-20260115T103000001Z-abcdefgh", transactionId: "KFTX-20260115T103000001Z-bcdefghj", mutation: mutation() });
   assert.equal(next.kind, "proposed");
   assert.equal(github.creates, 2);
+});
+
+test("a state merge racing the fetched base fails closed", async () => {
+  const git = new FakeGit();
+  const github = new FakeGitHub();
+  const coordinator = new StateTransactionCoordinator(repository(), git, github, () => new Date("2026-01-15T10:30:00.000Z"));
+  await coordinator.propose({ root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", operationId: "KFOP-20260115T103000000Z-abcdefgh", transactionId: "KFTX-20260115T103000000Z-bcdefghj", mutation: mutation() });
+  github.prs[0] = { ...github.prs[0]!, state: "merged", merge_commit: "c".repeat(40) };
+  git.mergedReachable = false;
+  await assert.rejects(coordinator.propose({ root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", operationId: "KFOP-20260115T103000001Z-abcdefgh", transactionId: "KFTX-20260115T103000001Z-bcdefghj", mutation: mutation() }), /not reachable from fetched origin\/main/);
+  assert.equal(github.creates, 1);
 });
 
 test("retries by reusing the uniquely marked pending state PR", async () => {

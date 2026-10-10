@@ -32,6 +32,7 @@ export interface StateTransactionRepository {
 export interface StateTransactionGit {
   fetch(remote: string, cwd: string): Promise<void>;
   resolveRef(ref: string, cwd: string): Promise<string>;
+  isAncestor?(ancestor: string, descendant: string, cwd: string): Promise<boolean>;
   createWorktree(input: { branch: string; base: string; cwd: string }): Promise<TransactionWorktree>;
   diffPaths(input: { worktree: string; base: string }): Promise<readonly string[]>;
   stageExact(input: { worktree: string; paths: readonly string[] }): Promise<void>;
@@ -65,6 +66,7 @@ export function createStateTransactionGit(git: GitAdapter): StateTransactionGit 
   return {
     fetch: (remote, cwd) => git.fetch(remote, cwd),
     resolveRef: (ref, cwd) => git.resolveRef(ref, cwd),
+    isAncestor: (ancestor, descendant, cwd) => git.isAncestor(ancestor, descendant, cwd),
     createWorktree: ({ branch, base, cwd }) => git.createBranchWorktree(branch, base, cwd),
     diffPaths: ({ worktree, base }) => git.workingDiffPaths(base, worktree),
     stageExact: ({ worktree, paths }) => git.stageExact(paths, worktree),
@@ -193,9 +195,17 @@ export class StateTransactionCoordinator {
     if (!isObjectId(baseCommit)) throw new StateTransactionError("origin/main did not resolve to a Git object ID");
 
     const historical = await discoverManagedPullRequests(this.github, { kind: "state" });
-    // Merged state PRs are append-only history, not current transaction
-    // authority. Only an outstanding open or closed-unmerged PR can block a
-    // new transaction based on the freshly read origin/main snapshot.
+    // Merged state PRs are history only after proving their merge is already
+    // part of the fetched authority. A merge racing this fetch must stop the
+    // stale proposal rather than permit a transaction from the old main.
+    for (const { pullRequest } of historical) {
+      if (pullRequest.state !== "merged") continue;
+      if (!pullRequest.merge_commit || !this.git.isAncestor || !(await this.git.isAncestor(pullRequest.merge_commit, baseCommit, plan.root))) {
+        throw new StateTransactionError(`merged state PR #${pullRequest.number} is not reachable from fetched origin/main`);
+      }
+    }
+    // Only an outstanding open or closed-unmerged PR can block a new
+    // transaction once every historical merge is in the authoritative base.
     const existing = historical.filter(({ pullRequest }) => pullRequest.state !== "merged");
     if (existing.length > 1) throw new StateTransactionError("more than one outstanding managed state PR exists");
     const candidate = existing[0];
