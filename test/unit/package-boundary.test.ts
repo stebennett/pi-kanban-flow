@@ -14,10 +14,27 @@ test("package boundary includes runtime entry points and excludes fixtures/tests
   assert.ok(files.includes("extensions/kanban-flow/index.ts"));
   assert.ok(files.includes("extensions/kanban-flow/paths.ts"));
   assert.ok(files.includes("extensions/kanban-flow/requirements/workflow.ts"));
-  assert.ok(files.includes("skills/kanban-init/SKILL.md"));
-  assert.ok(files.includes("skills/requirements/SKILL.md"));
-  assert.ok(!files.some((file: string) => file.startsWith("reference/")));
-  assert.ok(!files.some((file: string) => file.startsWith("test/")));
+  for (const asset of [
+    "skills/kanban/SKILL.md",
+    "skills/design/SKILL.md",
+    "skills/implement/SKILL.md",
+    "skills/review/SKILL.md",
+    "skills/ship/SKILL.md",
+    "skills/kanban-init/SKILL.md",
+    "skills/requirements/SKILL.md",
+    "agents/design-producer.md",
+    "agents/design-checker.md",
+    "agents/split-decider.md",
+    "agents/implementer.md",
+    "agents/ship-producer.md",
+    "agents/ship-checker.md",
+    "templates/agents/child-protocol.md",
+    "extensions/kanban-flow/engine/pump.ts",
+    "extensions/kanban-flow/lifecycle/review.ts",
+    "extensions/kanban-flow/tools/blocker-resolution.ts",
+  ]) assert.ok(files.includes(asset), `missing packaged asset: ${asset}`);
+  assert.ok(!files.some((file: string) => /^(reference|test)\//.test(file)));
+  assert.ok(!files.some((file: string) => /(^|\/)(dispatch|operation|provider|snapshot|worktree)s?\//i.test(file)));
 });
 
 test("asset resolution works from checkout, symlink, pinned archive, and packed installs", async () => {

@@ -14,6 +14,18 @@ export interface GitHubPullRequest {
   merge_commit: string | null;
 }
 export interface GitHubComment { id: number; body: string; author: string; created_at: string }
+export interface GitHubCheck {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  required: boolean;
+  code_evidence?: boolean;
+}
+export interface GitHubReview {
+  reviewer: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED" | "COMMENTED";
+  submitted_at: string;
+}
 export interface GitHubAdapter {
   listPullRequests(options?: { state?: "open" | "closed" | "all" }): Promise<readonly GitHubPullRequest[]>;
   createPullRequest(input: { title: string; body: string; head: string; base: string }): Promise<GitHubPullRequest>;
@@ -21,6 +33,9 @@ export interface GitHubAdapter {
   closePullRequest(number: number): Promise<void>;
   reopenPullRequest(number: number): Promise<void>;
   getComments(number: number): Promise<readonly GitHubComment[]>;
+  /** Parent-owned external facts used by shipping reconciliation. */
+  getChecks?(number: number): Promise<readonly GitHubCheck[]>;
+  getReviews?(number: number): Promise<readonly GitHubReview[]>;
 }
 
 export interface ManagedPullRequest {
@@ -75,6 +90,11 @@ export class GhCliAdapter implements GitHubAdapter {
     if (result.code !== 0) throw new Error(`gh command failed (${result.code}): ${result.stderr.trim().slice(0, 500)}`);
     return result.stdout;
   }
+  private async runAllowExit(args: readonly string[], allowed: readonly number[], options?: ProcessOptions): Promise<string> {
+    const result = await this.runner.run(this.executable, args, { cwd: options?.cwd ?? this.cwd, ...options });
+    if (result.code !== 0 && !allowed.includes(result.code)) throw new Error(`gh command failed (${result.code}): ${result.stderr.trim().slice(0, 500)}`);
+    return result.stdout;
+  }
   private repoArgs(): string[] { return this.repository ? ["--repo", this.repository] : []; }
   async listPullRequests(options: { state?: "open" | "closed" | "all" } = {}): Promise<readonly GitHubPullRequest[]> {
     const output = await this.run(["pr", "list", ...this.repoArgs(), "--state", options.state ?? "all", "--limit", "1000", "--json", "number,url,title,body,headRefName,baseRefName,state,headRefOid,mergeCommit"]);
@@ -95,6 +115,26 @@ export class GhCliAdapter implements GitHubAdapter {
     const output = await this.run(["pr", "view", String(number), ...this.repoArgs(), "--json", "comments"]);
     const value = JSON.parse(output) as { comments?: Array<Record<string, unknown>> };
     return (value.comments ?? []).map(normalizeComment);
+  }
+  async getChecks(number: number): Promise<readonly GitHubCheck[]> {
+    const output = await this.runAllowExit(["pr", "checks", String(number), ...this.repoArgs(), "--required", "--json", "name,state,bucket"], [8]);
+    const rows = JSON.parse(output) as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const bucket = String(row.bucket ?? "").toLowerCase();
+      const state = String(row.state ?? "unknown").toLowerCase();
+      const conclusion = bucket === "pass" ? "success" : bucket === "skipping" ? "skipped" : bucket === "fail" ? "failure" : bucket === "cancel" ? "cancelled" : bucket === "pending" || ["queued", "requested", "waiting", "pending", "in_progress"].includes(state) ? "queued" : "unknown";
+      return { name: String(row.name ?? ""), status: ["queued", "requested", "waiting", "pending"].includes(state) ? "in_progress" : state, conclusion, required: true };
+    });
+  }
+  async getReviews(number: number): Promise<readonly GitHubReview[]> {
+    const output = await this.run(["pr", "view", String(number), ...this.repoArgs(), "--json", "reviews"]);
+    const value = JSON.parse(output) as { reviews?: Array<Record<string, unknown>> };
+    return (value.reviews ?? []).map((row) => {
+      const author = row.author && typeof row.author === "object" ? String((row.author as { login?: unknown }).login ?? "") : String(row.author ?? "");
+      const state = String(row.state ?? "COMMENTED").toUpperCase();
+      if (!["APPROVED", "CHANGES_REQUESTED", "DISMISSED", "COMMENTED"].includes(state)) throw new Error(`unknown GitHub review state ${state}`);
+      return { reviewer: author, state: state as GitHubReview["state"], submitted_at: String(row.submittedAt ?? row.submitted_at ?? "") };
+    });
   }
 }
 

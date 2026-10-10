@@ -85,7 +85,21 @@ export default function kanbanFlowExtension(pi: ExtensionAPI): void {
     parameters: kanbanPumpParameters,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const version = await packageVersionFromManifest();
-      const details = await runKanbanPump(ctx.cwd, version, params, signal);
+      const parentModel = ctx.model ? {
+        provider: ctx.model.provider,
+        id: ctx.model.id,
+        thinking: (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const).includes(ctx.thinkingLevel as any) ? ctx.thinkingLevel as any : "medium",
+      } : undefined;
+      const modelResolver = {
+        resolve: async (provider: string, id: string) => {
+          if (ctx.scopedModels.length > 0 && !ctx.scopedModels.some((entry: any) => entry.model?.provider === provider && entry.model?.id === id || entry.provider === provider && entry.id === id)) return null;
+          const model = ctx.modelRegistry.find(provider, id);
+          if (!model) return null;
+          const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+          return { provider, id, authenticated: auth.ok, supportsTools: true };
+        },
+      };
+      const details = await runKanbanPump(ctx.cwd, version, params, signal, { parentModel, modelResolver });
       return { content: [{ type: "text", text: JSON.stringify(details) }], details };
     },
   });

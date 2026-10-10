@@ -1,84 +1,58 @@
 # pi-kanban-flow
 
-A Pi-native deterministic kanban workflow package organized around:
+`pi-kanban-flow` is a Pi-native deterministic workflow package for:
 
 ```text
-requirements → design → implement → review → ship
+requirements → design → split decision → implement → review → ship
 ```
 
-Stage 3 provides board initialization and requirements planning through checked, explicitly approved, human-reviewed state PRs. Merging a state PR is the authority boundary: an open PR is proposed state, never current board state. Stage 3 does not run design or implementation.
+## Install and trust
 
-## Runtime baseline
-
-- Pi `>=0.85.0 <0.86.0`
-- Node.js `>=22.19.0`
-- Git `>=2.39.0`
-- GitHub CLI `>=2.45.0`
-- macOS 13+ or a maintained Linux distribution
-- a GitHub repository with canonical `origin` and protected `main`
-
-## Installation and trust
-
-Install or link the package using Pi's normal package mechanism, then restart Pi so packaged extensions, skills, agents, and templates are rediscovered. Git-pinned and npm-packed installs are supported in addition to a local checkout or symlink.
-
-Project mutation requires a persisted **saved yes** trust decision for the repository (or an applicable parent). Temporary approval and `defaultProjectTrust: always` do not qualify. Project agent overrides are active only when config permits them and saved trust is proven; active override path/hash and effective model identity are shown before approval.
-
-## Initialize a board
-
-From the canonical trusted repository root:
+Install a pinned Git ref or npm release with Pi's package manager, then restart Pi so the extension and skills are discovered:
 
 ```text
-/skill:kanban-init
+pi install git:github.com/stebennett/pi-kanban-flow@<tag-or-commit>
 ```
 
-Initialization is LLM-free. It proposes only:
+The repository must be trusted with Pi's saved `/trust` decision. Temporary approval and `defaultProjectTrust: always` do not satisfy the workflow's saved-trust requirement. Runtime prerequisites are Pi `>=0.85.0 <0.86.0`, Node `>=22.19.0`, Git `>=2.39.0`, GitHub CLI `>=2.45.0`, and macOS or maintained Linux. A canonical `origin` and protected `main` are required.
 
-- `docs/cards/board.yaml`
-- `docs/cards/config.yaml`
-- `docs/cards/BOARD.md`
+## One pump, one durable boundary
 
-Review and merge the returned state PR. Initialization never combines initial requirements into that PR.
+`/skill:kanban` invokes exactly one deterministic pump. The parent engine fetches fresh `origin/main`, reconciles state/design/product facts, acquires the common lock, selects at most one dependency-ready card, and runs only its legal next action. It stops at one boundary: a state PR, external PR, human decision, blocker, external wait, failure, or no-action result.
 
-## Create or amend requirements
+Board state is authoritative only after a human merges a marked state PR. The user manually reviews and merges state, design, and product PRs in their prescribed order. Open or proposed PRs never become board authority, and the pump never auto-merges, approves, dismisses, resolves review comments, or continues to a second card.
 
-After initialization merges:
+The normal unsplit lifecycle is:
 
 ```text
-/skill:requirements
+backlog → design_review → ready_for_implementation → implementing
+→ implementation_review → ready_to_ship → shipping → done
 ```
 
-The skill asks one question at a time and passes a bounded brief to the deterministic engine. The engine:
+A checked design is followed by the mandatory split decision. A valid split atomically replaces the source card with vertical backlog cards and rewires dependents; it does not create product work. A `no_split` decision creates a parent-managed product worktree. Grandfathered `split_required` cards require an explicit typed `proceed_unsplit` decision. Implementation is test-first, path-jailed, and limited to approved planned paths. Parent-owned command probes and every configured review lens inspect one immutable commit. One bounded implementation rework is supported, with append-only evidence. Shipping reuses one uniquely marked product PR and waits for CI/review/merge authority; merge reconciliation proves inclusion from fresh `origin/main` before `done`.
 
-1. reads fresh `origin/main` under the common lock;
-2. runs the requirements producer and immutable-snapshot checker;
-3. derives IDs, card impacts, dependency rewires, grandfathering, and exact paths itself;
-4. displays one digest-bound approval in TUI/RPC mode; and
-5. after explicit approval and stale-state revalidation, proposes one state PR.
+## Native commands
 
-JSON/print modes prepare the approval document but cannot approve. A checker failure or inconclusive result requires a fresh revision; schema version 1 has no automatic requirements retry budget.
+- `/skill:kanban-init` — propose the empty control plane through one state PR.
+- `/skill:requirements` — produce and check requirements/cards with explicit approval.
+- `/skill:kanban` — run one normal pump.
+- `/skill:design`, `/skill:implement`, `/skill:review`, `/skill:ship` — request a phase diagnostically through the same coordinator; none can bypass scheduling or transitions.
+- `/kanban-validate [--markers]` — read-only diagnostics.
 
-Review the state PR and merge it manually. No requirement, card, artifact, or counter becomes authoritative before merge. Run validation again after merge before beginning later work.
+`kanban_blocker_resolution` is a typed, human-only resolution surface. Noninteractive modes prepare or refuse a decision; they cannot implicitly approve `proceed_unsplit`.
 
-## Failure recovery
+## Trust, overrides, and models
 
-- **Pending state PR:** review/merge or explicitly resolve it before another requirements run.
-- **Closed-unmerged or ambiguous managed PR:** stop and resolve the marked transaction; the engine fails closed.
-- **Stale approval/base:** start a fresh requirements run; approvals cannot be replayed.
-- **Design PR closure interruption:** retry after inspecting the canonical action marker; the engine revalidates exact PR identity and merge state.
-- **Lock contention/loss:** wait for the owner or use the separately specified confirmed recovery path. Never delete lock files manually.
-- **Agent/model/override failure:** correct trust, authentication, model availability, or the reported override and rerun. There is no fallback model.
-- **Noninteractive preparation:** rerun in TUI or RPC mode for explicit approval.
+Broad producer context requires saved project trust. Packaged agents are the defaults; a trusted project may override an agent through the configured project override location. Overrides are validated, hashed, reported in artifacts/reports, and can change behavior, so they are part of the review surface. Models inherit the active Pi parent provider/model/thinking level unless a validated project-level override selects another authenticated model. An unresolved override fails closed; there is no silent fallback.
 
-`/kanban-validate --markers` and `kanban_validate` are read-only diagnostics. They do not reconcile or mutate state.
+Children return role-specific structured results. Strict checkers/reviewers receive immutable snapshots and read-only tools. Producers receive only their role's policy; implementers may use path-jailed package tools and named configured project commands. No child receives arbitrary shell, Git, GitHub, board, ID, transition, or durable-path authority. Commands are direct executable/argv invocations owned by the parent, with bounded and redacted evidence.
 
-## Repository layout
+## Package contents and guarantees
 
-- `extensions/kanban-flow/` — deterministic engine and Pi tools
-- `skills/` — user-facing Pi skills
-- `agents/` — packaged specialist agent definitions
-- `templates/` — internal runtime assets
-- `test/` — unit, integration, and fixture tests
-- `docs/` — migration and architecture specifications
-- `reference/kanban-flow/` — read-only Claude plugin reference
+The package manifest exposes `extensions/kanban-flow` and `skills/`. It includes all lifecycle runtime modules, Stage 4 skills, specialist agents, and doctrine assets. Tests, `reference/` fixtures, dispatch logs, snapshots, temporary worktrees, provider events, and other generated artifacts are excluded from packed installs. Asset resolution is tested from a checkout, symlink, pinned Git checkout, and npm-packed archive.
 
-See `docs/spec-development-process.md` for development gates and sequencing, and `docs/checkpoint-stage-3-complete.md` for Stage 3 evidence and known gaps.
+## Deferred behavior
+
+This release intentionally does **not** provide an unattended loop controller, ADR files or indexes, post-review multi-PR split shipping, partial review-lens reruns, Claude-board migration, automatic human-review handling, automatic merging, retro/testing-level telemetry, or Windows support. Live provider authentication, live GitHub mutation, and unrun platform/version matrices remain environment-dependent evidence gaps; unknown external facts fail closed.
+
+See `docs/spec-one-card-lifecycle.md` for the authoritative operational contract, `docs/stage-4-review-matrix.md` for crash/effect coverage, and `docs/checkpoint-stage-4-complete.md` for the Stage 5 handoff.
