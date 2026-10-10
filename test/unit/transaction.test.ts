@@ -18,6 +18,7 @@ class FakeGit implements StateTransactionGit {
   async stagedPaths(): Promise<readonly string[]> { return ["docs/cards/board.yaml"]; }
   async commitState(): Promise<string> { this.calls.push("commit"); return "b".repeat(40); }
   async push(): Promise<void> { this.calls.push("push"); }
+  async removeWorktree(): Promise<void> { this.calls.push("remove"); }
 }
 
 class FakeGitHub implements GitHubAdapter {
@@ -60,7 +61,18 @@ test("proposes one exact state PR from the authoritative base", async () => {
   assert.equal(result.kind, "proposed");
   if (result.kind === "proposed") assert.equal(result.descriptor.id, requestedTransaction);
   assert.equal(github.creates, 1);
-  assert.deepEqual(git.calls, ["fetch", "resolve", "resolve", "worktree", "stage", "commit", "resolve", "push", "resolve"]);
+  assert.deepEqual(git.calls, ["fetch", "resolve", "resolve", "worktree", "stage", "commit", "resolve", "push", "resolve", "remove"]);
+});
+
+test("merged state PRs remain history and do not block the next transaction", async () => {
+  const git = new FakeGit();
+  const github = new FakeGitHub();
+  const coordinator = new StateTransactionCoordinator(repository(), git, github, () => new Date("2026-01-15T10:30:00.000Z"));
+  await coordinator.propose({ root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", operationId: "KFOP-20260115T103000000Z-abcdefgh", transactionId: "KFTX-20260115T103000000Z-bcdefghj", mutation: mutation() });
+  github.prs[0] = { ...github.prs[0]!, state: "merged", merge_commit: "c".repeat(40) };
+  const next = await coordinator.propose({ root: "/repo", repositoryId: "owner/repo", packageVersion: "0.0.0-dev", operationId: "KFOP-20260115T103000001Z-abcdefgh", transactionId: "KFTX-20260115T103000001Z-bcdefghj", mutation: mutation() });
+  assert.equal(next.kind, "proposed");
+  assert.equal(github.creates, 2);
 });
 
 test("retries by reusing the uniquely marked pending state PR", async () => {

@@ -192,8 +192,12 @@ export class StateTransactionCoordinator {
     const baseCommit = await this.git.resolveRef("origin/main", plan.root);
     if (!isObjectId(baseCommit)) throw new StateTransactionError("origin/main did not resolve to a Git object ID");
 
-    const existing = await discoverManagedPullRequests(this.github, { kind: "state" });
-    if (existing.length > 1) throw new StateTransactionError("more than one managed state PR exists");
+    const historical = await discoverManagedPullRequests(this.github, { kind: "state" });
+    // Merged state PRs are append-only history, not current transaction
+    // authority. Only an outstanding open or closed-unmerged PR can block a
+    // new transaction based on the freshly read origin/main snapshot.
+    const existing = historical.filter(({ pullRequest }) => pullRequest.state !== "merged");
+    if (existing.length > 1) throw new StateTransactionError("more than one outstanding managed state PR exists");
     const candidate = existing[0];
     if (candidate) {
       if (candidate.pullRequest.state === "open") return { kind: "pending", pullRequest: candidate.pullRequest, marker: candidate.marker };
@@ -238,6 +242,9 @@ export class StateTransactionCoordinator {
       const body = `${serializePullRequestMarker(marker)}\n\n${plan.body ?? "Human review is required before merging this state transaction."}`;
       const pullRequest = await this.github.createPullRequest({ title: plan.title ?? `Kanban state transaction ${transactionId}`, body, head: branch, base: "main" });
       assertCreatedPr(pullRequest, marker, commit);
+      // The pushed branch and provider PR are durable; the temporary linked
+      // worktree is not. Remove it before reporting a successful proposal.
+      if (this.git.removeWorktree) await this.git.removeWorktree({ worktree: worktree.path, branch, cwd: plan.root });
       return { kind: "proposed", descriptor, branch, commit, pullRequest };
     } finally {
       if (!committed && this.git.removeWorktree) await this.git.removeWorktree({ worktree: worktree.path, branch, cwd: plan.root }).catch(() => undefined);
